@@ -1,0 +1,2421 @@
+ZMM_SOURCELIST_TRANSFORMATION
+
+*&---------------------------------------------------------------------*
+*& Report ZMM_SOURCELIST_TRANSFORMATION
+*&---------------------------------------------------------------------*
+*&  ReqID#/WI#     : 0111002767/4000002003                             *
+*&  Author         : H510447                                           *
+*&  Date           : 23/02/2024                                        *
+*&  Object ID      : G700922                                           *
+*&  Transport No   : CIDK9A1U6N                                        *
+*&  Description    : Mass tool for Source List mass maintenance        *
+*&  Includes       : ZMM_SOURCELIST_TRANSFORM_TOP                      *
+*&                   ZMM_SOURCELIST_TRANSFORM_SCRN                     *
+*&                   ZMM_SOURCELIST_TRANSFORM_FORMS                    *
+*&---------------------------------------------------------------------*
+
+REPORT zrcr_sourcelist_transformation.
+
+*C-- Data Declarations
+INCLUDE zmm_sourcelist_transform_top IF FOUND.
+*C-- Selection Screen
+INCLUDE zmm_sourcelist_transform_scrn IF FOUND.
+*C-- Performs/Methods
+INCLUDE zmm_sourcelist_transform_forms IF FOUND.
+
+*----------------------------------------------------------------------*
+*                     INITIALIZATION                                   *
+*----------------------------------------------------------------------*
+INITIALIZATION.
+
+  CREATE OBJECT go_refmain.
+  IF go_refmain IS BOUND.
+*C-- Clear all global varaiables
+    CALL METHOD go_refmain->clear_global_data.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                   AT SELECTION-SCREEN                                *
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  IF go_refmain IS BOUND.
+*C-- Modify Scelection Screen
+    CALL METHOD go_refmain->modify_screen.
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+*C-- Get Source List File Details
+  IF go_refmain IS BOUND.
+    CALL METHOD go_refmain->get_local_file(
+      IMPORTING
+        me_file = p_file ).
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_dfile.
+*C-- Get Template File Details
+  IF go_refmain IS BOUND.
+    CALL METHOD go_refmain->get_local_file(
+      IMPORTING
+        me_file = p_dfile ).
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_erfile.
+*C-- Get Error File Details
+  IF go_refmain IS BOUND.
+    CALL METHOD go_refmain->get_local_file(
+      IMPORTING
+        me_file = p_erfile ).
+  ENDIF.
+
+AT SELECTION-SCREEN ON p_file.
+
+  IF p_fileup NE abap_true.
+    CLEAR p_file.
+  ENDIF.
+
+  IF p_file IS NOT INITIAL.
+    IF go_refmain IS BOUND.
+      CALL METHOD go_refmain->check_file_exist(
+        EXPORTING
+          mi_file = p_file ).
+    ENDIF.
+  ENDIF.
+
+AT SELECTION-SCREEN ON p_dfile.
+
+  IF p_templt NE abap_true.
+    CLEAR p_dfile.
+  ENDIF.
+  IF p_dfile IS NOT INITIAL.
+    IF go_refmain IS BOUND.
+      CALL METHOD go_refmain->check_file_extn(
+        EXPORTING
+          mi_file = p_dfile ).
+    ENDIF.
+  ENDIF.
+
+AT SELECTION-SCREEN.
+  IF sy-ucomm = c_onli.
+    IF go_refmain IS BOUND.
+      CALL METHOD go_refmain->validate_screen.
+      IF p_dfile IS NOT INITIAL AND p_templt IS NOT INITIAL.
+        "Download the template file for each request type
+        CALL METHOD go_refmain->download_template.
+      ENDIF.
+      "Read Input File
+      IF p_file IS NOT INITIAL.
+        CALL METHOD go_refmain->check_file_exist(
+          EXPORTING
+            mi_file = p_file ).
+        CALL METHOD go_refmain->read_input_file.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                     START-OF-SELECTION                               *
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  "File validation
+  IF go_refmain IS BOUND.
+    IF p_rep IS NOT INITIAL.
+      "Report
+      CALL METHOD go_refmain->get_data.
+    ELSE.
+      IF p_templt IS INITIAL AND gt_input IS NOT INITIAL.
+        "Validations on Input Data
+        IF p_del IS NOT INITIAL.
+          CALL METHOD go_refmain->update_final_table.
+        ELSE.
+          CALL METHOD go_refmain->validate_input_data.
+        ENDIF.
+        "Create/Update/Delete Source List
+        CALL METHOD go_refmain->maintain_source_list.
+
+        "Download Error Log File
+        IF p_filedw IS NOT INITIAL AND p_erfile IS NOT INITIAL.
+          CALL METHOD go_refmain->download_log_flle.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+END-OF-SELECTION.
+  "Display Output
+  IF gt_final IS NOT INITIAL OR gt_report IS NOT INITIAL.
+    CALL METHOD go_refmain->display_output.
+  ELSE.
+    IF p_templt IS INITIAL AND fl_no_file_data IS INITIAL.
+      WRITE: text-046.
+    ENDIF.
+  ENDIF.
+
+***Unique***
+
+ZMM_SOURCELIST_TRANSFORM_TOP
+*&---------------------------------------------------------------------*
+*&  Include           ZMM_SOURCELIST_TRANSFORM_TOP
+*&---------------------------------------------------------------------*
+*&  ReqID#/WI#     : 0111002767/4000002003                             *
+*&  Author         : H510447                                           *
+*&  Date           : 23/02/2024                                        *
+*&  Object ID      : G700922                                           *
+*&  Transport No   : CIDK9A1U6N                                        *
+*&  Description    : Mass tool for Source List mass maintenance        *
+*&---------------------------------------------------------------------*
+
+CLASS lcl_main DEFINITION DEFERRED.
+
+*C-- Types Declarations
+TYPES:
+       BEGIN OF ty_data,
+         matnr TYPE matnr,
+         werks TYPE werks_d,
+         zeord TYPE dzeord,
+         vdatu TYPE zde_vdatu,
+         bdatu TYPE zde_bdatu,
+         lifnr TYPE lifnr,
+         ekorg TYPE ekorg,
+         ebeln TYPE ebeln,
+         ebelp TYPE ebelp,
+         autet TYPE autet,
+         flifn TYPE flifn,
+         notkz TYPE ordsp,
+       END OF ty_data,
+
+       BEGIN OF ty_final,
+         matnr   TYPE matnr,
+         werks   TYPE werks_d,
+         vdatu   TYPE zde_vdatu,
+         bdatu   TYPE zde_bdatu,
+         lifnr   TYPE lifnr,
+         ekorg   TYPE ekorg,
+         ebeln   TYPE ebeln,
+         ebelp   TYPE ebelp,
+         autet   TYPE autet,
+         flifn   TYPE flifn,
+         notkz   TYPE ordsp,
+         status  TYPE zde_stat,
+         err_msg TYPE zde_err_msg,
+       END OF ty_final,
+
+       BEGIN OF ty_final2,
+         matnr   TYPE matnr,
+         werks   TYPE werks_d,
+         zeord   TYPE dzeord,
+         vdatu   TYPE zde_vdatu,
+         bdatu   TYPE zde_bdatu,
+         lifnr   TYPE lifnr,
+         ekorg   TYPE ekorg,
+         ebeln   TYPE ebeln,
+         ebelp   TYPE ebelp,
+         autet   TYPE autet,
+         flifn   TYPE flifn,
+         notkz   TYPE ordsp,
+         status  TYPE zde_stat,
+         err_msg TYPE zde_err_msg,
+       END OF ty_final2,
+
+       BEGIN OF ty_final_d,
+         matnr   TYPE matnr,
+         werks   TYPE werks_d,
+         zeord   TYPE dzeord,
+         status  TYPE zde_stat,
+         err_msg TYPE zde_err_msg,
+       END OF ty_final_d,
+
+       BEGIN OF ty_marc,
+         matnr TYPE matnr,
+         werks TYPE werks_d,
+         mmsta TYPE mmsta,
+       END OF ty_marc,
+
+       BEGIN OF ty_mara,
+         matnr TYPE matnr,
+         mstae TYPE mstae,
+       END OF ty_mara,
+
+       BEGIN OF ty_lfa1,
+         lifnr TYPE lifnr,
+       END OF ty_lfa1,
+
+       BEGIN OF ty_ekpo,
+         ebeln TYPE ebeln,
+         ebelp TYPE ebelp,
+         matnr TYPE matnr,
+         werks TYPE ewerk,
+       END OF ty_ekpo,
+
+       BEGIN OF ty_eord,
+         matnr TYPE matnr,
+         werks TYPE ewerk,
+         zeord TYPE dzeord,
+         lifnr TYPE elifn,
+         flifn TYPE flifn,
+         notkz TYPE ordsp,
+       END OF ty_eord,
+
+       BEGIN OF ty_eina,
+         infnr TYPE infnr,
+         matnr TYPE matnr,
+         lifnr TYPE elifn,
+       END OF ty_eina,
+
+       BEGIN OF ty_report,
+         matnr TYPE matnr,
+         werks TYPE ewerk,
+         zeord TYPE dzeord,
+         erdat TYPE erdat,
+         ernam TYPE ernam,
+         vdatu TYPE ordab,
+         bdatu TYPE ordbi,
+         lifnr TYPE elifn,
+         flifn TYPE flifn,
+         ebeln TYPE evrtn,
+         ebelp TYPE evrtp,
+         febel TYPE febel,
+         reswk TYPE bewrk,
+         fresw TYPE fresw,
+         ematn TYPE ematn,
+         notkz TYPE ordsp,
+         ekorg TYPE ekorg,
+         vrtyp TYPE bstyp,
+         eortp TYPE eortp,
+         autet TYPE autet,
+         meins TYPE bstme,  "Order Unit
+         logsy TYPE logsystem,
+         sobkz TYPE sobkz,
+         srm_contract_id  TYPE srm_contract_id,
+         srm_contract_itm TYPE srm_contract_item,
+         mtart TYPE mtart,
+         matkl TYPE matkl,
+         mstae TYPE mstae,
+         meins_2 TYPE meins,  "Base Unit of Measure
+         bstme TYPE bstme,
+         eannr TYPE eannr,
+         ean11 TYPE ean11,
+         kzrev TYPE kzrev,
+         kzkfg TYPE kzkfg,
+         xchpf TYPE xchpf,
+         extwg TYPE extwg,
+         satnr TYPE satnr,
+         ekgrp TYPE ekgrp,
+         mmsta TYPE mmsta,
+         dispr TYPE dispr,
+         dismm TYPE dismm,
+         dispo TYPE dispo,
+         plifz TYPE plifz,
+         webaz TYPE webaz,
+         disls TYPE disls,
+         beskz TYPE beskz,
+         sobsl TYPE sobsl,
+         minbe TYPE minbe,
+         eisbe TYPE eisbe,
+         bstrf TYPE bstrf,
+         ssqss TYPE qsspur,
+         mtvfp TYPE mtvfp,
+         kautb TYPE kautb,
+         kordb TYPE kordb,
+         prctr TYPE prctr,
+         disgr TYPE disgr,
+         qmatv TYPE qmatv,
+         abcin TYPE abcin,
+         sernp TYPE serail,
+         lgfsb TYPE lgfsb,
+         servg TYPE w_servgrd,
+         zzslday TYPE zde_slday,
+         maktx TYPE maktx,
+         land1 TYPE land1_gp,
+         name1 TYPE name1_gp,
+         ort01 TYPE ort01_gp,
+         pstlz TYPE pstlz,
+         regio TYPE regio,
+         sortl TYPE sortl,
+         stras TYPE stras_gp,
+         ktokk TYPE ktokk,
+         kunnr TYPE kunnr,
+         spras TYPE spras,
+         telfx TYPE telfx,
+         email TYPE ad_smtpadr,
+         vbund TYPE rassc,
+         waers TYPE bstwa,
+         zterm TYPE dzterm,
+         inco1 TYPE inco1,
+         inco2 TYPE inco2,
+         webre TYPE webre,
+         kalsk TYPE kalsk,
+         kzaut TYPE kzaut,
+         xersy TYPE xersy,
+         infnr TYPE infnr,
+         ekgrp_2 TYPE bkgrp,
+         waers_2 TYPE waers,
+         minbm TYPE minbm,
+         norbm TYPE norbm,
+         aplfz TYPE plifz,
+         netpr TYPE iprei,
+         peinh TYPE epein,
+         bprme TYPE bbprm,
+         webre_2 TYPE webre,
+       END OF ty_report,
+
+       BEGIN OF ty_mara_r,
+         matnr TYPE matnr,
+         mtart TYPE mtart,
+         matkl TYPE matkl,
+         meins TYPE meins,
+         bstme TYPE bstme,
+         eannr TYPE eannr,
+         ean11 TYPE ean11,
+         kzrev TYPE kzrev,
+         kzkfg TYPE kzkfg,
+         xchpf TYPE xchpf,
+         extwg TYPE extwg,
+         satnr TYPE satnr,
+         mstae TYPE mstae,
+       END OF ty_mara_r,
+
+       BEGIN OF ty_marc_r,
+         matnr TYPE matnr,
+         werks TYPE werks_d,
+         mmsta TYPE mmsta,
+         ekgrp TYPE ekgrp,
+         dispr TYPE dispr,
+         dismm TYPE dismm,
+         dispo TYPE dispo,
+         plifz TYPE plifz,
+         webaz TYPE webaz,
+         disls TYPE disls,
+         beskz TYPE beskz,
+         sobsl TYPE sobsl,
+         minbe TYPE minbe,
+         eisbe TYPE eisbe,
+         bstrf TYPE bstrf,
+         ssqss TYPE qsspur,
+         mtvfp TYPE mtvfp,
+         kautb TYPE kautb,
+         kordb TYPE kordb,
+         prctr TYPE prctr,
+         disgr TYPE disgr,
+         qmatv TYPE qmatv,
+         abcin TYPE abcin,
+         sernp TYPE serail,
+         servg TYPE w_servgrd,
+         lgfsb TYPE lgfsb,
+         zzslday TYPE zde_slday,
+       END OF ty_marc_r,
+
+       BEGIN OF ty_makt,
+         matnr TYPE matnr,
+         spras TYPE spras,
+         maktx TYPE maktx,
+       END OF ty_makt,
+
+       BEGIN OF ty_lfa1_r,
+         lifnr TYPE lifnr,
+         land1 TYPE land1_gp,
+         name1 TYPE name1_gp,
+         ort01 TYPE ort01_gp,
+         pstlz TYPE pstlz,
+         regio TYPE regio,
+         sortl TYPE sortl,
+         stras TYPE stras_gp,
+         adrnr TYPE adrnr,
+         ktokk TYPE ktokk,
+         kunnr TYPE kunnr,
+         spras TYPE spras,
+         telfx TYPE telfx,
+         vbund TYPE rassc,
+       END OF ty_lfa1_r,
+
+       BEGIN OF ty_lfm1,
+         lifnr TYPE elifn,
+         ekorg TYPE ekorg,
+         waers TYPE bstwa,
+         zterm TYPE dzterm,
+         inco1 TYPE inco1,
+         inco2 TYPE inco2,
+         webre TYPE webre,
+         kalsk TYPE kalsk,
+         kzaut TYPE kzaut,
+         xersy TYPE xersy,
+       END OF ty_lfm1,
+
+       BEGIN OF ty_eine,
+         infnr TYPE infnr,
+         ekorg TYPE ekorg,
+         werks TYPE ewerk,
+         ekgrp TYPE bkgrp,
+         waers TYPE waers,
+         minbm TYPE minbm,
+         norbm TYPE norbm,
+         aplfz TYPE plifz,
+         netpr TYPE iprei,
+         peinh TYPE epein,
+         bprme TYPE bbprm,
+         webre TYPE webre,
+       END OF ty_eine,
+
+       BEGIN OF ty_adr6,
+         addrnumber TYPE ad_addrnum,
+         persnumber TYPE ad_persnum,
+         date_from  TYPE ad_date_fr,
+         consnumber TYPE ad_consnum,
+         smtp_addr  TYPE ad_smtpadr,
+       END OF ty_adr6,
+
+        BEGIN OF ty_data_cr,
+          matnr TYPE matnr,
+          werks TYPE werks_d,
+          vdatu TYPE zde_vdatu,
+          bdatu TYPE zde_bdatu,
+          lifnr TYPE lifnr,
+          ekorg TYPE ekorg,
+          ebeln TYPE ebeln,
+          ebelp TYPE ebelp,
+          autet TYPE autet,
+          flifn TYPE flifn,
+          notkz TYPE ordsp,
+          END OF ty_data_cr,
+
+        BEGIN OF ty_data_up,
+         matnr TYPE matnr,
+         werks TYPE werks_d,
+         zeord TYPE dzeord,
+         vdatu TYPE zde_vdatu,
+         bdatu TYPE zde_bdatu,
+         lifnr TYPE lifnr,
+         ekorg TYPE ekorg,
+         ebeln TYPE ebeln,
+         ebelp TYPE ebelp,
+         autet TYPE autet,
+         flifn TYPE flifn,
+         notkz TYPE ordsp,
+       END OF ty_data_up,
+
+       BEGIN OF ty_data_dl,
+         matnr TYPE matnr,
+         werks TYPE werks_d,
+         zeord TYPE dzeord,
+       END OF ty_data_dl,
+
+      BEGIN OF ty_line,
+        line TYPE char1024,
+      END OF ty_line,
+
+
+     BEGIN OF ty_eord2,
+      matnr	TYPE matnr,
+      werks	TYPE ewerk,
+      zeord	TYPE dzeord,
+      erdat	TYPE erdat,
+      ernam	TYPE ernam,
+     END OF ty_eord2.
+
+
+*C-- Data Declarations
+DATA: go_refmain      TYPE REF TO lcl_main,
+      go_alv          TYPE REF TO cl_salv_table,
+      gv_filename     TYPE string,
+      gt_input        TYPE STANDARD TABLE OF ty_data,
+      gt_input_tmp    TYPE STANDARD TABLE OF ty_data,
+      gt_final        TYPE STANDARD TABLE OF ty_final,
+      gt_final_up     TYPE STANDARD TABLE OF ty_final2,
+      gt_final_uptmp  TYPE STANDARD TABLE OF ty_final2,
+      gs_final_up     TYPE ty_final2,
+      gt_final_d      TYPE STANDARD TABLE OF ty_final_d,
+      gt_report       TYPE STANDARD TABLE OF ty_report,
+      gv_matnr        TYPE matnr,
+      gv_ewerk        TYPE ewerk,
+      gv_elifn        TYPE elifn,
+      gv_ekorg        TYPE ekorg,
+      gv_ordab        TYPE ordab,
+      gv_ordbi        TYPE ordbi,
+      gv_flifn        TYPE flifn,
+      gv_ordsp        TYPE ordsp,
+      gv_ekgrp        TYPE ekgrp,
+      gv_autet        TYPE autet,
+      gv_matkl        TYPE matkl,
+      gv_dispo        TYPE dispo,
+      gv_dismm        TYPE dismm,
+      fl_no_file_data TYPE flag.
+
+*C-- Constants Declarations
+CONSTANTS: c_mod       TYPE char03       VALUE 'MOD',
+           c_fil       TYPE char03       VALUE 'FIL',
+           c_rep       TYPE char03       VALUE 'REP',
+           c_req       TYPE char03       VALUE 'REQ',
+           c_extn      TYPE char03       VALUE 'XLS',
+           c_xlsx      TYPE char04       VALUE 'XLSX',
+           c_onli      TYPE syucomm      VALUE 'ONLI',
+           c_d         TYPE char01       VALUE 'D',
+           c_e         TYPE char01       VALUE 'E',
+           c_i         TYPE char01       VALUE 'I',
+           c_s         TYPE char01       VALUE 'S',
+           c_u         TYPE char01       VALUE 'U',
+           c_06        TYPE mmsta        VALUE '06',
+           c_z6        TYPE mmsta        VALUE 'Z6',
+           c_begin_col TYPE i            VALUE 1,
+           c_begin_row TYPE i            VALUE 1,
+           c_end_col   TYPE i            VALUE 12,
+           c_end_row   TYPE i            VALUE 9999,
+           c_row1      TYPE kcd_ex_row_n VALUE '0001',
+           c_col1      TYPE kcd_ex_col_n VALUE '0001',
+           c_col2      TYPE kcd_ex_col_n VALUE '0002',
+           c_col3      TYPE kcd_ex_col_n VALUE '0003',
+           c_col4      TYPE kcd_ex_col_n VALUE '0004',
+           c_col5      TYPE kcd_ex_col_n VALUE '0005',
+           c_col6      TYPE kcd_ex_col_n VALUE '0006',
+           c_col7      TYPE kcd_ex_col_n VALUE '0007',
+           c_col8      TYPE kcd_ex_col_n VALUE '0008',
+           c_col9      TYPE kcd_ex_col_n VALUE '0009',
+           c_col10     TYPE kcd_ex_col_n VALUE '0010',
+           c_col11     TYPE kcd_ex_col_n VALUE '0011',
+           c_col12     TYPE kcd_ex_col_n VALUE '0012',
+           c_matnr     TYPE lvc_fname    VALUE 'MATNR',
+           c_werks     TYPE lvc_fname    VALUE 'WERKS',
+           c_vdatu     TYPE lvc_fname    VALUE 'VDATU',
+           c_bdatu     TYPE lvc_fname    VALUE 'BDATU',
+           c_lifnr     TYPE lvc_fname    VALUE 'LIFNR',
+           c_ekorg     TYPE lvc_fname    VALUE 'EKORG',
+           c_ebeln     TYPE lvc_fname    VALUE 'EBELN',
+           c_ebelp     TYPE lvc_fname    VALUE 'EBELP',
+           c_status    TYPE lvc_fname    VALUE 'STATUS',
+           c_err_msg   TYPE lvc_fname    VALUE 'ERR_MSG',
+           c_1         TYPE autet        VALUE '1',
+           c_activity  TYPE char01       VALUE 'V',
+           c_sl_fm     TYPE sc_funcnam   VALUE 'ME_DIRECT_INPUT_SOURCE_LIST',
+           c_11        TYPE numc2        VALUE '11',
+           c_12        TYPE numc2        VALUE '12',
+           c_13        TYPE numc2        VALUE '13',
+           c_14        TYPE numc2        VALUE '14',
+           c_15        TYPE numc2        VALUE '15',
+           c_16        TYPE numc2        VALUE '16',
+           c_17        TYPE numc2        VALUE '17',
+           c_18        TYPE numc2        VALUE '18',
+           c_19        TYPE numc2        VALUE '19',
+           c_20        TYPE numc2        VALUE '20',
+           c_21        TYPE numc2        VALUE '21',
+           c_22        TYPE numc2        VALUE '22',
+           c_23        TYPE numc2        VALUE '23',
+           c_24        TYPE numc2        VALUE '24',
+           c_bin       TYPE char10       VALUE 'BIN',
+           c_zrc_plant TYPE xuobject     VALUE 'ZRC_PLANT',
+           c_01        TYPE activ_auth   VALUE '01',
+           c_02        TYPE activ_auth   VALUE '02',
+           c_06c       TYPE activ_auth   VALUE '06',
+           c_werks_c5  TYPE char5        VALUE 'WERKS',
+           c_actvt     TYPE char5        VALUE 'ACTVT',
+           c_slash     TYPE char1        VALUE '/',
+           c_hyphen    TYPE char1        VALUE '-',
+           c_full_stop TYPE char1        VALUE '.'.
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_main DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_main DEFINITION FINAL.
+
+  PUBLIC SECTION.
+    METHODS:
+      clear_global_data,
+      modify_screen,
+      get_local_file   EXPORTING me_file TYPE localfile,
+      check_file_extn  IMPORTING mi_file TYPE localfile,
+      check_file_exist IMPORTING mi_file TYPE localfile,
+      validate_screen,
+      download_template,
+      read_input_file,
+      validate_input_data,
+      update_final_table,
+      maintain_source_list,
+      download_log_flle,
+      display_output,
+      build_fieldcat,
+      get_data.
+
+ENDCLASS.                    "lcl_main DEFINITION
+***Unique***
+
+ZMM_SOURCELIST_TRANSFORM_SCRN
+
+*&---------------------------------------------------------------------*
+*&  Include           ZMM_SOURCELIST_TRANSFORM_SCRN
+*&---------------------------------------------------------------------*
+*&  ReqID#/WI#     : 0111002767/4000002003                             *
+*&  Author         : H510447                                           *
+*&  Date           : 28/03/2024                                        *
+*&  Object ID      : G700922                                           *
+*&  Transport No   : CIDK9A1U6N                                        *
+*&  Description    : Mass tool for Source List mass maintenance        *
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-001.
+PARAMETERS: p_cre RADIOBUTTON GROUP gr1 USER-COMMAND inc DEFAULT 'X' MODIF ID req,
+            p_upd RADIOBUTTON GROUP gr1 MODIF ID req,
+            p_del RADIOBUTTON GROUP gr1 MODIF ID req.
+SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-002.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_templt RADIOBUTTON GROUP gr2 USER-COMMAND com DEFAULT 'X'.
+SELECTION-SCREEN COMMENT (20) text-004.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_fileup RADIOBUTTON GROUP gr2.
+SELECTION-SCREEN COMMENT (20) text-005.
+SELECTION-SCREEN END OF LINE.
+
+PARAMETERS: p_file TYPE localfile MODIF ID mod.
+
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_rep RADIOBUTTON GROUP gr2.
+SELECTION-SCREEN COMMENT (20) text-019.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK b2.
+
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE text-003.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: p_filedw AS CHECKBOX MODIF ID mod.
+SELECTION-SCREEN COMMENT 03(20) text-006 FOR FIELD p_filedw MODIF ID mod.
+SELECTION-SCREEN END OF LINE.
+PARAMETERS: p_erfile TYPE localfile MODIF ID mod.
+SELECTION-SCREEN END OF BLOCK b3.
+
+SELECTION-SCREEN: BEGIN OF BLOCK b4 WITH FRAME TITLE text-004.
+PARAMETERS: p_dfile TYPE localfile MODIF ID fil.
+SELECTION-SCREEN END OF BLOCK b4.
+
+SELECTION-SCREEN BEGIN OF BLOCK b5 WITH FRAME TITLE text-045.
+SELECT-OPTIONS: s_matnr FOR gv_matnr NO INTERVALS MODIF ID rep,
+                s_werks FOR gv_ewerk NO INTERVALS MODIF ID rep OBLIGATORY,
+                s_lifnr FOR gv_elifn NO INTERVALS MODIF ID rep,
+                s_ekorg FOR gv_ekorg NO INTERVALS MODIF ID rep,
+                s_vdatu FOR gv_ordab NO INTERVALS MODIF ID rep,
+                s_bdatu FOR gv_ordbi NO INTERVALS MODIF ID rep,
+                s_flifn FOR gv_flifn NO INTERVALS MODIF ID rep,
+                s_notkz FOR gv_ordsp NO INTERVALS MODIF ID rep,
+                s_ekgrp FOR gv_ekgrp NO INTERVALS MODIF ID rep,
+                s_autet FOR gv_autet NO INTERVALS MODIF ID rep,
+                s_matkl FOR gv_matkl NO INTERVALS MODIF ID rep,
+                s_dispo FOR gv_dispo NO INTERVALS MODIF ID rep,
+                s_dismm FOR gv_dismm NO INTERVALS MODIF ID rep.
+SELECTION-SCREEN END OF BLOCK b5.
+
+***Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZMM_SOURCELIST_TRANSFORM_FORMS
+*&---------------------------------------------------------------------*
+*&  ReqID#/WI#     : 0111002767/4000002003                             *
+*&  Author         : H510447                                           *
+*&  Date           : 23/02/2024                                        *
+*&  Object ID      : G700922                                           *
+*&  Transport No   : CIDK9A1U6N                                        *
+*&  Description    : Mass tool for Source List mass maintenance        *
+*&---------------------------------------------------------------------*
+
+CLASS lcl_main IMPLEMENTATION.
+
+  METHOD clear_global_data.
+    CLEAR: gv_filename,  gt_input, gt_final,
+           gt_final_d, gt_final_up, gs_final_up.
+
+  ENDMETHOD.                    "clear_global_data
+
+  METHOD modify_screen.
+
+    IF p_templt IS NOT INITIAL.
+      p_filedw = abap_false.
+      LOOP AT SCREEN.
+        IF screen-group1 = c_mod OR
+           screen-group1 = c_rep.
+          screen-active    = 0.
+          screen-input     = 0.
+          screen-output    = 0.
+          screen-invisible = 1.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDLOOP.
+    ELSEIF p_fileup IS NOT INITIAL.
+      LOOP AT SCREEN.
+        IF screen-group1 = c_fil OR
+           screen-group1 = c_rep.
+          screen-active    = 0.
+          screen-input     = 0.
+          screen-output    = 0.
+          screen-invisible = 1.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDLOOP.
+    ELSEIF p_rep IS NOT INITIAL.
+      LOOP AT SCREEN.
+        IF screen-group1 = c_mod OR
+           screen-group1 = c_fil OR
+           screen-group1 = c_req.
+          screen-active    = 0.
+          screen-input     = 0.
+          screen-output    = 0.
+          screen-invisible = 1.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+  ENDMETHOD.                    "modify_screen
+
+  METHOD get_local_file.
+
+    DATA: lt_file_table TYPE filetable,
+          ls_file_table TYPE file_table,
+          lv_rc         TYPE i,
+          lv_extension  TYPE string,
+          lv_filter     TYPE string.
+
+    CLEAR me_file.
+
+    lv_extension = c_xlsx.
+    lv_filter    = text-015.
+
+    CALL METHOD cl_gui_frontend_services=>file_open_dialog
+      EXPORTING
+        default_extension       = lv_extension
+        file_filter             = lv_filter
+      CHANGING
+        file_table              = lt_file_table
+        rc                      = lv_rc
+      EXCEPTIONS
+        file_open_dialog_failed = 1
+        cntl_error              = 2
+        error_no_gui            = 3
+        not_supported_by_gui    = 4
+        OTHERS                  = 5.
+    IF sy-subrc EQ 0.
+      IF lv_rc EQ 1.
+        READ TABLE lt_file_table INTO ls_file_table INDEX 1.
+        IF sy-subrc = 0.
+          me_file = ls_file_table-filename.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    CLEAR: lt_file_table[], lv_rc, lv_extension, lv_filter,
+           ls_file_table.
+
+  ENDMETHOD.                    "get_local_file
+
+  METHOD check_file_extn.
+
+    DATA: lv_ext    TYPE char10,
+          lv_file   TYPE char1024.
+
+* Get the extension of the file and check whether it is .XLS or not
+    lv_file = mi_file.
+    IF lv_file IS NOT INITIAL.
+      CALL FUNCTION 'TRINT_FILE_GET_EXTENSION'
+        EXPORTING
+          filename  = lv_file
+          uppercase = abap_true
+        IMPORTING
+          extension = lv_ext.
+
+      IF NOT ( lv_ext = c_extn
+        OR lv_ext = c_xlsx ).
+        MESSAGE text-012 TYPE c_e.
+      ENDIF.
+      CLEAR: lv_file, lv_ext.
+    ENDIF.
+
+  ENDMETHOD.                    "check_file_extn
+
+  METHOD check_file_exist.
+
+    DATA: lv_file_exists    TYPE abap_bool,
+          lv_file_with_path TYPE string.
+
+    MOVE mi_file TO lv_file_with_path.
+
+    CALL METHOD cl_gui_frontend_services=>file_exist
+      EXPORTING
+        file                 = lv_file_with_path
+      RECEIVING
+        result               = lv_file_exists
+      EXCEPTIONS
+        cntl_error           = 1
+        error_no_gui         = 2
+        wrong_parameter      = 3
+        not_supported_by_gui = 4
+        OTHERS               = 5.
+
+    IF lv_file_exists IS INITIAL.
+      MESSAGE text-011 TYPE c_e DISPLAY LIKE c_i.
+    ENDIF.
+
+    CLEAR: lv_file_with_path, lv_file_exists.
+
+  ENDMETHOD.                    "check_file_exist
+
+  METHOD validate_screen.
+
+    IF p_templt IS NOT INITIAL AND p_dfile IS INITIAL.
+      MESSAGE text-007 TYPE c_e DISPLAY LIKE c_i.
+    ELSEIF p_fileup IS NOT INITIAL AND p_file IS INITIAL.
+      MESSAGE text-009 TYPE c_e DISPLAY LIKE c_i.
+    ELSEIF p_filedw IS NOT INITIAL AND p_erfile IS INITIAL.
+      MESSAGE text-010 TYPE c_e DISPLAY LIKE c_i.
+    ENDIF.
+
+  ENDMETHOD.                    "validate_screen
+
+  METHOD download_template.
+    DATA: lt_data   TYPE STANDARD TABLE OF ty_data_cr,
+              lt_data_up TYPE STANDARD TABLE OF ty_data_up,
+              lt_data_dl TYPE STANDARD TABLE OF ty_data_dl,
+              lcl_if_table     TYPE REF TO cl_salv_table,          " Basis Class for Simple Tables
+              lcl_if_functions TYPE REF TO cl_salv_functions_list, " Generic and User-Defined Functions in List-Type Tables
+              lcl_if_layout    TYPE REF TO cl_salv_layout,         " Settings for Layout
+              lv_xml_type      TYPE salv_bs_constant,
+              lv_xml           TYPE xstring,
+              lt_srctab        TYPE STANDARD TABLE OF ty_line,
+              lv_len           TYPE i,                             " Len of type Integers
+              ls_key           TYPE salv_s_layout_key.             " Layout Key
+
+    gv_filename = p_dfile.
+    IF p_cre IS NOT INITIAL.
+      TRY.
+          cl_salv_table=>factory(
+            IMPORTING
+              r_salv_table = lcl_if_table
+            CHANGING
+              t_table      = lt_data ).
+        CATCH cx_salv_msg.                              "#EC NO_HANDLER
+      ENDTRY.
+    ELSEIF p_upd IS NOT INITIAL.
+
+      TRY.
+          cl_salv_table=>factory(
+            IMPORTING
+              r_salv_table = lcl_if_table
+            CHANGING
+              t_table      = lt_data_up ).
+        CATCH cx_salv_msg.                              "#EC NO_HANDLER
+      ENDTRY.
+
+    ELSEIF p_del IS NOT INITIAL.
+      TRY.
+          cl_salv_table=>factory(
+            IMPORTING
+              r_salv_table = lcl_if_table
+            CHANGING
+              t_table      = lt_data_dl ).
+        CATCH cx_salv_msg.                              "#EC NO_HANDLER
+      ENDTRY.
+    ENDIF.
+    lcl_if_functions = lcl_if_table->get_functions( ).
+    lcl_if_functions->set_all( abap_true ).
+    lcl_if_layout = lcl_if_table->get_layout( ).
+    ls_key-report = sy-repid.
+    lcl_if_layout->set_key( ls_key ).
+    lcl_if_layout->set_save_restriction(
+                        if_salv_c_layout=>restrict_user_independant ).
+    lv_xml_type =  if_salv_bs_xml=>c_type_xlsx. "
+    lv_xml      = lcl_if_table->to_xml( xml_type = lv_xml_type ).
+
+    IF lv_xml IS NOT INITIAL.
+      CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+        EXPORTING
+          buffer        = lv_xml
+        IMPORTING
+          output_length = lv_len
+        TABLES
+          binary_tab    = lt_srctab.
+
+      IF lt_srctab IS NOT INITIAL.
+        CALL METHOD cl_gui_frontend_services=>gui_download
+          EXPORTING
+            bin_filesize            = lv_len
+            filename                = gv_filename
+            filetype                = c_bin
+          CHANGING
+            data_tab                = lt_srctab
+          EXCEPTIONS
+            file_write_error        = 1
+            no_batch                = 2
+            gui_refuse_filetransfer = 3
+            invalid_type            = 4
+            no_authority            = 5
+            unknown_error           = 6
+            header_not_allowed      = 7
+            separator_not_allowed   = 8
+            filesize_not_allowed    = 9
+            header_too_long         = 10
+            dp_error_create         = c_11
+            dp_error_send           = c_12
+            dp_error_write          = c_13
+            unknown_dp_error        = c_14
+            access_denied           = c_15
+            dp_out_of_memory        = c_16
+            disk_full               = c_17
+            dp_timeout              = c_18
+            file_not_found          = c_19
+            dataprovider_exception  = c_20
+            control_flush_error     = c_21
+            not_supported_by_gui    = c_22
+            error_no_gui            = c_23
+            OTHERS                  = c_24.
+        IF sy-subrc <> 0.
+          MESSAGE text-051 TYPE c_e.
+        ELSE.
+          MESSAGE text-008 TYPE c_s.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.                    "download_template
+
+  METHOD read_input_file.
+
+    DATA: lt_xls_data     TYPE STANDARD TABLE OF alsmex_tabline,
+          lt_xls_data_tmp TYPE STANDARD TABLE OF alsmex_tabline,
+          ls_xls_data     TYPE alsmex_tabline,
+          ls_input        TYPE ty_data.
+    IF p_file IS NOT INITIAL.
+      CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+        EXPORTING
+          filename                = p_file
+          i_begin_col             = c_begin_col
+          i_begin_row             = c_begin_row
+          i_end_col               = c_end_col
+          i_end_row               = c_end_row
+        TABLES
+          intern                  = lt_xls_data
+        EXCEPTIONS
+          inconsistent_parameters = 1
+          upload_ole              = 2
+          OTHERS                  = 3.
+      IF sy-subrc <> 0.
+        MESSAGE text-014 TYPE c_i.
+      ELSE.
+*C--File Validation.
+        lt_xls_data_tmp = lt_xls_data.
+        DELETE lt_xls_data_tmp WHERE row NE 1.
+        IF sy-subrc EQ 0.
+          SORT lt_xls_data_tmp BY col DESCENDING.
+          READ TABLE lt_xls_data_tmp INTO ls_xls_data INDEX 1.
+          IF sy-subrc EQ 0.
+            IF ls_xls_data-col = c_11 AND p_cre NE abap_true.
+              MESSAGE text-052 TYPE c_e DISPLAY LIKE c_i.
+            ENDIF.
+            IF ls_xls_data-col = c_12 AND p_upd NE abap_true.
+              MESSAGE text-052 TYPE c_e DISPLAY LIKE c_i.
+            ENDIF.
+            IF ls_xls_data-col = 3 AND p_del NE abap_true.
+              MESSAGE text-052 TYPE c_e DISPLAY LIKE c_i.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+*c-- Process FIle data
+        DELETE lt_xls_data WHERE row = c_row1.
+        IF lt_xls_data IS INITIAL.
+          fl_no_file_data = abap_true.
+          MESSAGE text-014 TYPE c_i.
+        ELSE.
+          LOOP AT lt_xls_data INTO ls_xls_data.
+            IF p_cre IS NOT INITIAL.
+              CASE ls_xls_data-col.
+                WHEN c_col1.
+                  IF ls_xls_data-value IS NOT INITIAL.
+                    CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+                      EXPORTING
+                        input  = ls_xls_data-value
+                      IMPORTING
+                        output = ls_input-matnr.
+                  ENDIF.
+                WHEN c_col2.
+                  ls_input-werks = ls_xls_data-value.
+                WHEN c_col3.
+                  ls_input-vdatu = ls_xls_data-value.
+                WHEN c_col4.
+                  ls_input-bdatu = ls_xls_data-value.
+                WHEN c_col5.
+                  IF ls_xls_data-value IS NOT INITIAL.
+                    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                      EXPORTING
+                        input  = ls_xls_data-value
+                      IMPORTING
+                        output = ls_input-lifnr.
+                  ENDIF.
+                WHEN c_col6.
+                  ls_input-ekorg = ls_xls_data-value.
+                WHEN c_col7.
+                  IF ls_xls_data-value IS NOT INITIAL.
+                    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                      EXPORTING
+                        input  = ls_xls_data-value
+                      IMPORTING
+                        output = ls_input-ebeln.
+                  ENDIF.
+                WHEN c_col8.
+                  ls_input-ebelp = ls_xls_data-value.
+                WHEN c_col9.
+                  ls_input-autet = ls_xls_data-value.
+                WHEN c_col10.
+                  ls_input-flifn = ls_xls_data-value.
+                WHEN c_col11.
+                  ls_input-notkz = ls_xls_data-value.
+              ENDCASE.
+              AT END OF row.
+                APPEND: ls_input TO gt_input.
+                CLEAR: ls_input.
+              ENDAT.
+            ELSEIF p_upd IS NOT INITIAL.
+              CASE ls_xls_data-col.
+                WHEN c_col1.
+                  CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+                    EXPORTING
+                      input  = ls_xls_data-value
+                    IMPORTING
+                      output = ls_input-matnr.
+                WHEN c_col2.
+                  ls_input-werks = ls_xls_data-value.
+                WHEN c_col3.
+                  ls_input-zeord = ls_xls_data-value.
+                WHEN c_col4.
+                  ls_input-vdatu = ls_xls_data-value.
+                WHEN c_col5.
+                  ls_input-bdatu = ls_xls_data-value.
+                WHEN c_col6.
+                  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                    EXPORTING
+                      input  = ls_xls_data-value
+                    IMPORTING
+                      output = ls_input-lifnr.
+                WHEN c_col7.
+                  ls_input-ekorg = ls_xls_data-value.
+                WHEN c_col8.
+                  IF  ls_xls_data-value IS NOT INITIAL.
+                    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                      EXPORTING
+                        input  = ls_xls_data-value
+                      IMPORTING
+                        output = ls_input-ebeln.
+                  ENDIF.
+                WHEN c_col9.
+                  ls_input-ebelp = ls_xls_data-value.
+                WHEN c_col10.
+                  ls_input-autet = ls_xls_data-value.
+                WHEN c_col11.
+                  ls_input-flifn = ls_xls_data-value.
+                WHEN c_col12.
+                  ls_input-notkz = ls_xls_data-value.
+              ENDCASE.
+              AT END OF row.
+                APPEND: ls_input TO gt_input.
+                CLEAR: ls_input.
+              ENDAT.
+            ELSEIF p_del IS NOT INITIAL.
+              CASE ls_xls_data-col.
+                WHEN c_col1.
+                  IF ls_xls_data-value IS NOT INITIAL.
+                    CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+                      EXPORTING
+                        input  = ls_xls_data-value
+                      IMPORTING
+                        output = ls_input-matnr.
+                  ENDIF.
+                WHEN c_col2.
+                  ls_input-werks = ls_xls_data-value.
+                WHEN c_col3.
+                  ls_input-zeord = ls_xls_data-value.
+              ENDCASE.
+              AT END OF row.
+                APPEND: ls_input TO gt_input.
+                CLEAR: ls_input.
+              ENDAT.
+            ENDIF.
+            CLEAR: ls_xls_data.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    CLEAR: lt_xls_data, lt_xls_data_tmp.
+  ENDMETHOD.                    "read_input_file
+
+  METHOD validate_input_data.
+
+    DATA: ls_input TYPE ty_data,
+          ls_final TYPE ty_final,
+          lt_mara  TYPE STANDARD TABLE OF ty_mara,
+          ls_mara  TYPE ty_mara,
+          lt_marc  TYPE STANDARD TABLE OF ty_marc,
+          ls_marc  TYPE ty_marc,
+          lt_lfa1  TYPE STANDARD TABLE OF ty_lfa1,
+          lt_ekpo  TYPE STANDARD TABLE OF ty_ekpo,
+          lv_bdate TYPE datum,
+          lv_edate TYPE datum,
+          lt_eord  TYPE STANDARD TABLE OF ty_eord,
+          lt_eord_temp1 TYPE STANDARD TABLE OF ty_eord,
+          lt_eord_temp2 TYPE STANDARD TABLE OF ty_eord,
+          ls_eord  TYPE ty_eord,
+          lt_eina  TYPE STANDARD TABLE OF ty_eina,
+          lv_date TYPE sydatum.
+
+    CLEAR gt_input_tmp.
+    gt_input_tmp = gt_input.
+    SORT gt_input_tmp BY matnr.
+    DELETE ADJACENT DUPLICATES FROM gt_input_tmp
+    COMPARING matnr.
+    IF gt_input_tmp IS NOT INITIAL.
+      "Get MARA Data
+      SELECT matnr
+             mstae
+        FROM mara
+        INTO TABLE lt_mara
+        FOR ALL ENTRIES IN gt_input_tmp
+        WHERE matnr = gt_input_tmp-matnr.
+      IF sy-subrc = 0 AND lt_mara IS NOT INITIAL.
+        SORT lt_mara BY matnr.
+      ENDIF.
+    ENDIF.
+
+    CLEAR gt_input_tmp.
+    gt_input_tmp = gt_input.
+    SORT gt_input_tmp BY matnr werks.
+    DELETE ADJACENT DUPLICATES FROM gt_input_tmp
+    COMPARING matnr werks.
+    IF gt_input_tmp IS NOT INITIAL.
+      "Get MARC Data
+      SELECT matnr
+             werks
+             mmsta
+        FROM marc
+        INTO TABLE lt_marc
+        FOR ALL ENTRIES IN gt_input_tmp
+        WHERE matnr = gt_input_tmp-matnr
+        AND   werks = gt_input_tmp-werks.
+      IF sy-subrc = 0 AND lt_mara IS NOT INITIAL.
+        SORT lt_marc BY matnr werks.
+      ENDIF.
+    ENDIF.
+    CLEAR gt_input_tmp.
+    gt_input_tmp = gt_input.
+    SORT gt_input_tmp BY lifnr.
+    DELETE ADJACENT DUPLICATES FROM gt_input_tmp
+    COMPARING lifnr.
+    IF gt_input_tmp IS NOT INITIAL.
+      "Get LFA1 Data
+      SELECT lifnr
+        FROM lfa1
+        INTO TABLE lt_lfa1
+        FOR ALL ENTRIES IN gt_input_tmp
+        WHERE lifnr = gt_input_tmp-lifnr.
+      IF sy-subrc EQ 0.
+        SORT lt_lfa1 BY lifnr.
+      ENDIF.
+    ENDIF.
+    CLEAR gt_input_tmp.
+    gt_input_tmp = gt_input.
+    SORT gt_input_tmp BY ebeln ebelp.
+    DELETE ADJACENT DUPLICATES FROM gt_input_tmp
+    COMPARING ebeln ebelp.
+    IF gt_input_tmp IS NOT INITIAL.
+      "Get EKPO Data
+      SELECT ebeln
+             ebelp
+             matnr
+             werks
+        FROM ekpo
+        INTO TABLE lt_ekpo
+        FOR ALL ENTRIES IN gt_input_tmp
+        WHERE ebeln = gt_input_tmp-ebeln
+        AND   ebelp = gt_input_tmp-ebelp.
+      IF sy-subrc = 0 AND lt_ekpo IS NOT INITIAL.
+        SORT lt_ekpo BY ebeln ebelp.
+      ENDIF.
+    ENDIF.
+
+    CLEAR gt_input_tmp.
+    gt_input_tmp = gt_input.
+    SORT gt_input_tmp BY matnr werks.
+    DELETE ADJACENT DUPLICATES FROM gt_input_tmp
+    COMPARING matnr werks.
+    IF gt_input_tmp IS NOT INITIAL.
+      "Get data from EORD
+      SELECT matnr
+             werks
+             zeord
+             lifnr
+             flifn
+             notkz
+        FROM eord
+        INTO TABLE lt_eord
+        FOR ALL ENTRIES IN gt_input_tmp
+        WHERE matnr = gt_input_tmp-matnr
+        AND   werks = gt_input_tmp-werks.
+      IF sy-subrc = 0 AND lt_eord IS NOT INITIAL.
+        SORT lt_eord BY matnr werks.
+        CLEAR: lt_eord_temp1.
+        lt_eord_temp1 = lt_eord.
+        lt_eord_temp2 = lt_eord.
+        DELETE lt_eord_temp1 WHERE flifn NE abap_true.
+        DELETE lt_eord_temp2 WHERE notkz NE abap_true.
+        SORT lt_eord_temp1 BY matnr werks flifn.
+        SORT lt_eord_temp2 BY matnr werks notkz.
+      ENDIF.
+    ENDIF.
+
+    "Get Info Record from EINA
+    CLEAR gt_input_tmp.
+    gt_input_tmp = gt_input.
+    SORT gt_input_tmp BY matnr lifnr.
+    DELETE ADJACENT DUPLICATES FROM gt_input_tmp
+    COMPARING matnr lifnr.
+    IF gt_input_tmp IS NOT INITIAL.
+      SELECT infnr
+             matnr
+             lifnr
+        FROM eina
+        INTO TABLE lt_eina
+        FOR ALL ENTRIES IN gt_input_tmp
+        WHERE matnr = gt_input_tmp-matnr
+        AND   lifnr = gt_input_tmp-lifnr.
+      IF sy-subrc = 0 AND lt_eina IS NOT INITIAL.
+        SORT lt_eina BY matnr lifnr.
+      ENDIF.
+    ENDIF.
+    CLEAR gt_input_tmp.
+    LOOP AT gt_input INTO ls_input.
+
+      ls_final-matnr   = ls_input-matnr.
+      ls_final-werks   = ls_input-werks.
+      ls_final-vdatu   = ls_input-vdatu.
+      ls_final-bdatu   = ls_input-bdatu.
+      ls_final-lifnr   = ls_input-lifnr.
+      ls_final-ebeln   = ls_input-ebeln.
+      ls_final-ebelp   = ls_input-ebelp.
+      ls_final-autet   = ls_input-autet.
+      ls_final-flifn   = ls_input-flifn.
+      ls_final-notkz   = ls_input-notkz.
+
+      IF ls_input-ekorg IS NOT INITIAL.
+        CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+          EXPORTING
+            input  = ls_input-ekorg
+          IMPORTING
+            output = ls_final-ekorg.
+      ENDIF.
+
+      IF ls_final-vdatu IS NOT INITIAL.
+        REPLACE ALL OCCURRENCES OF c_slash IN ls_final-vdatu
+        WITH  c_full_stop.
+        IF sy-subrc NE 0.
+          REPLACE ALL OCCURRENCES OF c_hyphen IN ls_final-vdatu
+          WITH c_full_stop.
+        ENDIF.
+        IF ls_final-vdatu IS NOT INITIAL.
+          CALL FUNCTION 'CONVERT_DATE_TO_INTERNAL'
+            EXPORTING
+              date_external            = ls_final-vdatu
+            IMPORTING
+              date_internal            = lv_date
+            EXCEPTIONS
+              date_external_is_invalid = 1
+              OTHERS                   = 2.
+          IF sy-subrc EQ 0.
+            lv_bdate = lv_date.
+            CLEAR ls_final-vdatu.
+          ENDIF.
+        ENDIF.
+        IF lv_date IS NOT INITIAL.
+          CALL FUNCTION 'CONVERT_DATE_TO_EXTERNAL'
+            EXPORTING
+              date_internal            = lv_date
+            IMPORTING
+              date_external            = ls_final-vdatu
+            EXCEPTIONS
+              date_internal_is_invalid = 1
+              OTHERS                   = 2.
+          IF sy-subrc EQ 0.
+            CLEAR: lv_date.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      IF ls_final-bdatu IS NOT INITIAL.
+        REPLACE ALL OCCURRENCES OF c_slash IN ls_final-bdatu
+         WITH c_full_stop.
+        IF sy-subrc NE 0.
+          REPLACE ALL OCCURRENCES OF c_hyphen IN ls_final-bdatu
+          WITH c_full_stop.
+        ENDIF.
+        IF ls_final-bdatu IS NOT INITIAL.
+          CALL FUNCTION 'CONVERT_DATE_TO_INTERNAL'
+            EXPORTING
+              date_external            = ls_final-bdatu
+            IMPORTING
+              date_internal            = lv_date
+            EXCEPTIONS
+              date_external_is_invalid = 1
+              OTHERS                   = 2.
+          IF sy-subrc EQ 0.
+            lv_edate = lv_date.
+            CLEAR: ls_final-bdatu.
+          ENDIF.
+        ENDIF.
+        IF lv_date IS NOT INITIAL.
+          CALL FUNCTION 'CONVERT_DATE_TO_EXTERNAL'
+            EXPORTING
+              date_internal            = lv_date
+            IMPORTING
+              date_external            = ls_final-bdatu
+            EXCEPTIONS
+              date_internal_is_invalid = 1
+              OTHERS                   = 2.
+          IF sy-subrc EQ 0.
+            CLEAR: lv_date.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      IF p_cre IS NOT INITIAL.
+        "Check the file data for mandatory field values
+        IF ls_input-matnr IS INITIAL OR
+           ls_input-werks IS INITIAL OR
+           ls_input-vdatu IS INITIAL OR
+           ls_input-bdatu IS INITIAL OR
+           ls_input-lifnr IS INITIAL OR
+           ls_input-ekorg IS INITIAL.
+
+          IF ls_input-matnr IS INITIAL.
+            ls_final-status  = c_e.
+            ls_final-err_msg = text-032.
+          ENDIF.
+
+          IF ls_input-werks IS INITIAL.
+            ls_final-status  = c_e.
+            ls_final-err_msg = text-033.
+          ENDIF.
+
+          IF ls_input-vdatu IS INITIAL.
+            ls_final-status  = c_e.
+            ls_final-err_msg = text-034.
+          ENDIF.
+
+          IF ls_input-bdatu IS INITIAL.
+            ls_final-status  = c_e.
+            ls_final-err_msg = text-035.
+          ENDIF.
+
+          IF ls_input-lifnr IS INITIAL.
+            ls_final-status  = c_e.
+            ls_final-err_msg = text-036.
+          ENDIF.
+
+          IF ls_input-ekorg IS INITIAL.
+            ls_final-status  = c_e.
+            ls_final-err_msg = text-037.
+          ENDIF.
+        ELSE.
+          "Validate the material number existence in the plant code
+          READ TABLE lt_marc INTO ls_marc
+          WITH KEY matnr = ls_input-matnr
+                    werks = ls_input-werks BINARY SEARCH.
+          IF sy-subrc = 0.
+            "Check the plant material status (MMSTA) in the table MARC
+            IF   ls_marc-mmsta NE c_06 AND
+                 ls_marc-mmsta NE c_z6.
+              ls_final-status  = c_e.
+              CONCATENATE text-038 ls_input-matnr text-040
+                          INTO ls_final-err_msg SEPARATED BY space.
+            ELSE.
+              "Check the cross plant material status (MSTAE) in the table MARA
+              READ TABLE lt_mara INTO ls_mara
+              WITH KEY matnr = ls_input-matnr BINARY SEARCH.
+              IF sy-subrc = 0 AND ls_mara-mstae NE c_06 AND
+                 ls_mara-mstae NE c_z6 AND
+                 ls_mara-mstae IS NOT INITIAL.
+                ls_final-status  = c_e.
+                CONCATENATE text-038 ls_input-matnr text-040
+                            INTO ls_final-err_msg SEPARATED BY space.
+              ENDIF.
+            ENDIF.
+          ELSE.
+            ls_final-status = c_e.
+            CONCATENATE text-038 ls_input-matnr text-039 ls_input-werks
+                        INTO ls_final-err_msg SEPARATED BY space.
+          ENDIF.
+        ENDIF.
+
+        IF ls_final-status NE c_e.
+          "If Agreement number and its item number are entered, then
+          "validate the Material (MATNR) and plant code (WERKS) from the table EKPO
+          IF ls_input-ebeln IS NOT INITIAL
+            AND ls_input-ebelp IS NOT INITIAL.
+            READ TABLE lt_ekpo WITH KEY ebeln = ls_input-ebeln
+                                        ebelp = ls_input-ebelp
+                                        matnr = ls_input-matnr
+                                        werks = ls_input-werks
+                                        TRANSPORTING NO FIELDS.
+            IF sy-subrc NE 0.
+              ls_final-status  = c_e.
+              ls_final-err_msg = text-053.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+        "Check validity from date is greater than validity to date
+        IF lv_bdate GT lv_edate.
+          ls_final-status  = c_e.
+          ls_final-err_msg = text-043.
+        ENDIF.
+
+        "Validate the vendor number (LIFNR) from the table LFA1
+        IF ls_final-status NE c_e.
+          READ TABLE lt_lfa1 WITH KEY lifnr = ls_input-lifnr
+          TRANSPORTING NO FIELDS BINARY SEARCH.
+          IF sy-subrc NE 0.
+            ls_final-status = c_e.
+            CONCATENATE text-025 ls_input-lifnr text-042
+                        INTO ls_final-err_msg SEPARATED BY space.
+          ENDIF.
+        ENDIF.
+
+        "Validation for Fixed Suppy Source or Blocked
+        READ TABLE lt_eord_temp1 WITH KEY matnr = ls_input-matnr
+                                          werks = ls_input-werks
+                                          flifn = abap_true
+                                          TRANSPORTING NO FIELDS
+                                          BINARY SEARCH.
+        IF sy-subrc = 0.
+          ls_final-status  = c_e.
+          ls_final-err_msg = text-049.
+        ELSE.
+          READ TABLE lt_eord_temp2 WITH KEY matnr = ls_input-matnr
+                                            werks = ls_input-werks
+                                            notkz = abap_true
+                                            TRANSPORTING NO FIELDS
+                                            BINARY SEARCH.
+          IF sy-subrc = 0.
+            ls_final-status  = c_e.
+            ls_final-err_msg = text-050.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      "Validate the Material (MATNR) and plant code (WERKS)
+      "against number (ZEORD) from the table EORD
+      IF p_upd IS NOT INITIAL OR p_del IS NOT INITIAL.
+        READ TABLE lt_eord INTO ls_eord
+        WITH KEY matnr = ls_input-matnr
+                 werks = ls_input-werks
+                 BINARY SEARCH.
+        IF sy-subrc = 0 AND ls_eord-zeord IS INITIAL.
+          ls_final-status  = c_e.
+          ls_final-err_msg = text-018.
+        ENDIF.
+      ENDIF.
+
+      "Check authorization for plant
+      IF ls_final-status NE c_e.
+        IF p_cre IS NOT INITIAL.
+          AUTHORITY-CHECK OBJECT c_zrc_plant
+               ID c_werks_c5 FIELD ls_input-werks
+               ID c_actvt FIELD c_01 .
+          IF sy-subrc NE 0.
+            ls_final-status  = c_e.
+            CONCATENATE text-041 ls_input-werks
+                        INTO ls_final-err_msg SEPARATED BY space.
+          ENDIF.
+        ELSEIF p_del IS NOT INITIAL.
+          AUTHORITY-CHECK OBJECT c_zrc_plant
+               ID c_werks_c5 FIELD ls_input-werks
+               ID c_actvt FIELD c_06c.
+          IF sy-subrc NE 0.
+            ls_final-status  = c_e.
+            CONCATENATE text-041 ls_input-werks
+                        INTO ls_final-err_msg SEPARATED BY space.
+          ENDIF.
+        ELSE.
+          AUTHORITY-CHECK OBJECT c_zrc_plant
+             ID c_werks_c5 FIELD ls_input-werks
+             ID c_actvt FIELD c_02.
+          IF sy-subrc NE 0.
+            ls_final-status  = c_e.
+            CONCATENATE text-041 ls_input-werks
+                        INTO ls_final-err_msg SEPARATED BY space.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      IF ls_input-autet = c_1 AND p_del IS INITIAL.
+        READ TABLE lt_eina WITH KEY matnr = ls_input-matnr
+                                    lifnr = ls_input-lifnr
+                                    TRANSPORTING NO FIELDS
+                                    BINARY SEARCH.
+        IF sy-subrc NE 0.
+          ls_final-status  = c_e.
+          ls_final-err_msg = text-020.
+        ENDIF.
+      ENDIF.
+      APPEND: ls_final TO gt_final.
+      IF p_upd IS NOT INITIAL OR p_del IS NOT INITIAL.
+        gs_final_up-matnr   =  ls_final-matnr.
+        gs_final_up-werks   =  ls_final-werks.
+        gs_final_up-vdatu   =  ls_final-vdatu.
+        gs_final_up-bdatu   =  ls_final-bdatu.
+        gs_final_up-lifnr   =  ls_final-lifnr.
+        gs_final_up-ekorg   =  ls_final-ekorg.
+        gs_final_up-ebeln   =  ls_final-ebeln.
+        gs_final_up-ebelp   =  ls_final-ebelp.
+        gs_final_up-autet   =  ls_final-autet.
+        gs_final_up-flifn   =  ls_final-flifn.
+        gs_final_up-notkz   =  ls_final-notkz.
+        gs_final_up-status  =  ls_final-status.
+        gs_final_up-err_msg =  ls_final-err_msg.
+        gs_final_up-zeord   = ls_input-zeord.
+        APPEND: gs_final_up TO gt_final_up.                 "
+      ENDIF.
+      CLEAR: ls_input, ls_final, ls_mara, ls_marc, ls_eord.
+    ENDLOOP.
+
+  ENDMETHOD.                    "validate_input_data
+
+  METHOD update_final_table.
+    DATA: ls_input TYPE ty_data,
+          ls_final TYPE ty_final.
+
+    CLEAR: gs_final_up.
+    LOOP AT gt_input INTO ls_input.
+      ls_final-matnr = ls_input-matnr.
+      ls_final-werks = ls_input-werks.
+      APPEND ls_final TO gt_final.
+
+      gs_final_up-matnr = ls_input-matnr.
+      gs_final_up-werks = ls_input-werks.
+      gs_final_up-zeord = ls_input-zeord.
+      APPEND gs_final_up TO gt_final_up.
+      CLEAR:ls_final, gs_final_up, ls_input.
+    ENDLOOP.
+
+  ENDMETHOD.                    "Update_final_table
+
+  METHOD maintain_source_list.
+
+    DATA: lt_eord    TYPE STANDARD TABLE OF eordu,
+          ls_eord    TYPE eordu,
+          ls_return  TYPE wsrs_return,
+          ls_final_d TYPE ty_final_d.
+
+    FIELD-SYMBOLS: <fs_final>     TYPE ty_final,
+                    <fs_final_up> TYPE ty_final2.
+
+    DATA: lv_tabix TYPE sytabix,
+          lt_eord2 TYPE TABLE OF ty_eord2,
+          ls_eord2 TYPE ty_eord2.
+    IF p_upd IS NOT INITIAL.
+      gt_final_uptmp = gt_final_up.
+      SORT gt_final_uptmp BY matnr werks zeord.
+      DELETE ADJACENT DUPLICATES FROM gt_final_uptmp
+      COMPARING matnr werks zeord.
+      IF gt_final_uptmp IS NOT INITIAL.
+        SELECT matnr
+               werks
+               zeord
+               erdat
+               ernam FROM eord
+               INTO  TABLE lt_eord2
+               FOR ALL ENTRIES IN gt_final_uptmp
+               WHERE matnr EQ gt_final_uptmp-matnr AND
+                     werks EQ gt_final_uptmp-werks AND
+                     zeord EQ gt_final_uptmp-zeord.
+        IF sy-subrc EQ 0.
+          SORT lt_eord2 BY matnr werks zeord.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    LOOP AT gt_final ASSIGNING <fs_final> WHERE status NE c_e.
+      lv_tabix  = sy-tabix.
+
+      ls_eord-mandt = sy-mandt.
+      ls_eord-matnr = <fs_final>-matnr.
+      ls_eord-werks = <fs_final>-werks.
+      ls_eord-lifnr = <fs_final>-lifnr.
+
+      IF p_upd IS NOT INITIAL OR p_del IS NOT INITIAL.
+        READ TABLE gt_final_up ASSIGNING <fs_final_up>
+        INDEX lv_tabix.
+        IF sy-subrc EQ 0.
+          IF <fs_final_up>-zeord IS INITIAL.
+            IF p_upd IS NOT INITIAL.
+              <fs_final_up>-status = c_e.
+              <fs_final_up>-err_msg = text-054. "Number Field is Mandatory
+              IF <fs_final_up> IS  ASSIGNED.
+                UNASSIGN <fs_final_up>.
+              ENDIF.
+            ENDIF.
+            IF p_del IS NOT INITIAL.
+              ls_final_d-matnr = <fs_final>-matnr.
+              ls_final_d-werks = <fs_final>-werks.
+              ls_final_d-status = c_e.
+              ls_final_d-err_msg = text-054. "Number Field is Mandatory
+              APPEND: ls_final_d TO gt_final_d.
+              CLEAR :ls_final_d.
+            ENDIF.
+            CLEAR: lv_tabix, ls_eord.
+            CONTINUE.
+          ENDIF.
+          ls_eord-zeord    = <fs_final_up>-zeord.
+          ls_final_d-zeord = <fs_final_up>-zeord.
+          IF p_upd IS NOT INITIAL.
+            READ TABLE lt_eord2
+            INTO ls_eord2 WITH KEY matnr = <fs_final_up>-matnr
+                                   werks = <fs_final_up>-werks
+                                   zeord = <fs_final_up>-zeord
+                                   BINARY SEARCH.
+            IF sy-subrc EQ 0.
+              ls_eord-erdat = ls_eord2-erdat.
+              ls_eord-ernam = ls_eord2-ernam.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      IF p_cre IS NOT INITIAL OR p_upd IS NOT INITIAL.
+        IF <fs_final>-vdatu IS NOT INITIAL.
+          CALL FUNCTION 'CONVERT_DATE_TO_INTERNAL'
+            EXPORTING
+              date_external = <fs_final>-vdatu
+            IMPORTING
+              date_internal = ls_eord-vdatu.
+        ENDIF.
+        IF <fs_final>-bdatu IS NOT INITIAL.
+          CALL FUNCTION 'CONVERT_DATE_TO_INTERNAL'
+            EXPORTING
+              date_external = <fs_final>-bdatu
+            IMPORTING
+              date_internal = ls_eord-bdatu.
+        ENDIF.
+
+        ls_eord-ekorg = <fs_final>-ekorg.
+        ls_eord-autet = <fs_final>-autet.
+        ls_eord-flifn = <fs_final>-flifn.
+        ls_eord-notkz = <fs_final>-notkz.
+        ls_eord-ebeln = <fs_final>-ebeln.
+        ls_eord-ebelp = <fs_final>-ebelp.
+      ENDIF.
+      CASE abap_true.
+        WHEN p_cre.
+          ls_eord-kz  = c_i.
+        WHEN p_upd.
+          ls_eord-kz  = c_u.
+        WHEN p_del.
+          ls_eord-kz  = c_d.
+        WHEN OTHERS.
+      ENDCASE.
+
+      APPEND: ls_eord TO lt_eord.
+
+      CALL FUNCTION 'ME_INITIALIZE_SOURCE_LIST'.
+      IF <fs_final>-matnr IS NOT INITIAL AND
+         <fs_final>-werks IS NOT INITIAL.
+        CALL FUNCTION 'ME_DIRECT_INPUT_SOURCE_LIST'
+          EXPORTING
+            i_matnr          = <fs_final>-matnr
+            i_werks          = <fs_final>-werks
+            activity         = c_activity
+          TABLES
+            t_eord           = lt_eord
+          EXCEPTIONS
+            plant_missing    = 1
+            material_missing = 2
+            error_message    = 3
+            OTHERS           = 4.
+        IF sy-subrc = 0.
+          CALL FUNCTION 'ME_POST_SOURCE_LIST_NEW'
+            EXPORTING
+              i_matnr = <fs_final>-matnr.
+
+          CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+            EXPORTING
+              wait = abap_true.
+
+          <fs_final>-status  = c_s.
+          <fs_final>-err_msg = text-017.
+          IF  p_upd IS NOT INITIAL.
+            <fs_final_up>-status = c_s.
+            <fs_final_up>-err_msg = text-017.
+          ENDIF.
+
+        ELSE.
+          CALL FUNCTION 'WSRS_MSG_EXCEPTION_CATCH'
+            EXPORTING
+              pi_function_module = c_sl_fm
+              pi_program_calling = sy-repid
+            CHANGING
+              px_return          = ls_return.
+
+          <fs_final>-status  = ls_return-type.
+          <fs_final>-err_msg = ls_return-message.
+          IF  p_upd IS NOT INITIAL.
+            <fs_final_up>-status = ls_return-type.
+            <fs_final_up>-err_msg = ls_return-message.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      IF p_del IS NOT INITIAL.
+        ls_final_d-matnr   = <fs_final>-matnr.
+        ls_final_d-werks   = <fs_final>-werks.
+        ls_final_d-zeord   = <fs_final_up>-zeord.
+        ls_final_d-status  = <fs_final>-status.
+        ls_final_d-err_msg = <fs_final>-err_msg.
+        APPEND: ls_final_d TO gt_final_d.
+        CLEAR :ls_final_d.
+      ENDIF.
+
+      IF <fs_final_up> IS  ASSIGNED.
+        UNASSIGN <fs_final_up>.
+      ENDIF.
+      CLEAR: ls_eord, lt_eord, ls_return.
+    ENDLOOP.
+
+    IF <fs_final> IS ASSIGNED.
+      UNASSIGN: <fs_final>.
+    ENDIF.
+    CLEAR: ls_final_d, lt_eord2, ls_eord2.
+  ENDMETHOD.                    "maintain_source_list
+
+  METHOD download_log_flle.
+
+    DATA: lcl_if_table     TYPE REF TO cl_salv_table,          " Basis Class for Simple Tables
+          lcl_if_functions TYPE REF TO cl_salv_functions_list, " Generic and User-Defined Functions in List-Type Tables
+          lcl_if_layout    TYPE REF TO cl_salv_layout,         " Settings for Layout
+          lv_xml_type      TYPE salv_bs_constant,
+          lv_xml           TYPE xstring,
+          lt_srctab        TYPE STANDARD TABLE OF ty_line,
+          lv_len           TYPE i,                             " Len of type Integers
+          ls_key           TYPE salv_s_layout_key.             " Layout Key
+
+    CLEAR: gv_filename.
+    gv_filename = p_erfile.
+
+    IF p_cre IS NOT INITIAL.
+      TRY.
+          cl_salv_table=>factory(
+            IMPORTING
+              r_salv_table = lcl_if_table
+            CHANGING
+              t_table      = gt_final ).
+        CATCH cx_salv_msg.                              "#EC NO_HANDLER
+      ENDTRY.
+
+    ELSEIF p_upd IS NOT INITIAL.
+
+      TRY.
+          cl_salv_table=>factory(
+            IMPORTING
+              r_salv_table = lcl_if_table
+            CHANGING
+              t_table      = gt_final_up ).
+        CATCH cx_salv_msg.                              "#EC NO_HANDLER
+      ENDTRY.
+
+    ELSEIF p_del IS NOT INITIAL.
+      TRY.
+          cl_salv_table=>factory(
+            IMPORTING
+              r_salv_table = lcl_if_table
+            CHANGING
+              t_table      = gt_final_d ).
+        CATCH cx_salv_msg.                              "#EC NO_HANDLER
+      ENDTRY.
+    ENDIF.
+    lcl_if_functions = lcl_if_table->get_functions( ).
+    lcl_if_functions->set_all( abap_true ).
+    lcl_if_layout = lcl_if_table->get_layout( ).
+    ls_key-report = sy-repid.
+    lcl_if_layout->set_key( ls_key ).
+    lcl_if_layout->set_save_restriction(
+                    if_salv_c_layout=>restrict_user_independant ).
+    lv_xml_type =  if_salv_bs_xml=>c_type_xlsx. "
+    lv_xml      = lcl_if_table->to_xml( xml_type = lv_xml_type ).
+
+    CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+      EXPORTING
+        buffer        = lv_xml
+      IMPORTING
+        output_length = lv_len
+      TABLES
+        binary_tab    = lt_srctab.
+
+    CALL METHOD cl_gui_frontend_services=>gui_download
+      EXPORTING
+        bin_filesize            = lv_len
+        filename                = gv_filename
+        filetype                = c_bin
+      CHANGING
+        data_tab                = lt_srctab
+      EXCEPTIONS
+        file_write_error        = 1
+        no_batch                = 2
+        gui_refuse_filetransfer = 3
+        invalid_type            = 4
+        no_authority            = 5
+        unknown_error           = 6
+        header_not_allowed      = 7
+        separator_not_allowed   = 8
+        filesize_not_allowed    = 9
+        header_too_long         = 10
+        dp_error_create         = c_11
+        dp_error_send           = c_12
+        dp_error_write          = c_13
+        unknown_dp_error        = c_14
+        access_denied           = c_15
+        dp_out_of_memory        = c_16
+        disk_full               = c_17
+        dp_timeout              = c_18
+        file_not_found          = c_19
+        dataprovider_exception  = c_20
+        control_flush_error     = c_21
+        not_supported_by_gui    = c_22
+        error_no_gui            = c_23
+        OTHERS                  = c_24.
+    IF sy-subrc <> 0.
+      MESSAGE text-016 TYPE c_e.
+    ELSE.
+      MESSAGE text-013 TYPE c_s.
+    ENDIF.
+
+  ENDMETHOD.                    "download_log_flle
+
+  METHOD display_output.
+
+    DATA: ls_msg        TYPE REF TO cx_salv_msg,
+          lv_error_text TYPE string,
+          lcl_functions TYPE REF TO cl_salv_functions_list.
+
+*C-- Output Table Reference
+    TRY.
+        IF p_rep IS NOT INITIAL.
+          CALL METHOD cl_salv_table=>factory
+            EXPORTING
+              list_display = if_salv_c_bool_sap=>false
+            IMPORTING
+              r_salv_table = go_alv
+            CHANGING
+              t_table      = gt_report.
+        ELSE.
+          IF p_cre IS NOT INITIAL.
+            CALL METHOD cl_salv_table=>factory
+              EXPORTING
+                list_display = if_salv_c_bool_sap=>false
+              IMPORTING
+                r_salv_table = go_alv
+              CHANGING
+                t_table      = gt_final.
+
+          ELSEIF p_upd IS NOT INITIAL.
+            CALL METHOD cl_salv_table=>factory
+              EXPORTING
+                list_display = if_salv_c_bool_sap=>false
+              IMPORTING
+                r_salv_table = go_alv
+              CHANGING
+                t_table      = gt_final_up.
+
+          ELSEIF p_del IS NOT INITIAL.
+            CALL METHOD cl_salv_table=>factory
+              EXPORTING
+                list_display = if_salv_c_bool_sap=>false
+              IMPORTING
+                r_salv_table = go_alv
+              CHANGING
+                t_table      = gt_final_d.
+          ENDIF.
+        ENDIF.
+
+      CATCH cx_salv_msg INTO ls_msg.
+        lv_error_text = ls_msg->get_text( ).
+        MESSAGE lv_error_text TYPE c_i.
+        RETURN.
+    ENDTRY.
+
+*C-- Set Display Properties
+    IF go_alv IS BOUND.
+
+      CALL METHOD go_alv->get_functions
+        RECEIVING
+          value = lcl_functions.
+
+      CALL METHOD lcl_functions->set_all
+        EXPORTING
+          value = if_salv_c_bool_sap=>true.
+
+*C-- Create Columns Descriptions
+      IF go_refmain IS BOUND.
+        CALL METHOD go_refmain->build_fieldcat( ).
+      ENDIF.
+
+*C-- Display Output
+      go_alv->display( ).
+    ENDIF.
+
+    CLEAR: gt_final, gt_final_d, gt_report, lv_error_text.
+
+  ENDMETHOD.                    "display_output
+
+  METHOD build_fieldcat.
+
+    DATA: lo_columns    TYPE REF TO cl_salv_columns_table,
+          lo_column     TYPE REF TO cl_salv_column_table.
+
+    CALL METHOD go_alv->get_columns
+      RECEIVING
+        value = lo_columns.
+
+    TRY.
+        lo_column ?= lo_columns->get_column( c_matnr ).
+        lo_column->set_long_text( text-021 ).
+        lo_columns->set_optimize( value = abap_true ).
+
+        lo_column ?= lo_columns->get_column( c_werks ).
+        lo_column->set_long_text( text-022 ).
+        lo_columns->set_optimize( value = abap_true ).
+        IF p_del NE abap_true.
+          lo_column ?= lo_columns->get_column( c_vdatu ).
+          lo_column->set_long_text( text-023 ).
+          lo_column->set_medium_text( space ) .
+          lo_column->set_short_text( space ) .
+          lo_columns->set_optimize( value = abap_true ).
+
+          lo_column ?= lo_columns->get_column( c_bdatu ).
+          lo_column->set_long_text( text-024 ).
+          lo_column->set_medium_text( space ) .
+          lo_column->set_short_text( space ) .
+          lo_columns->set_optimize( value = abap_true ).
+
+          lo_column ?= lo_columns->get_column( c_lifnr ).
+          lo_column->set_long_text( text-025 ).
+          lo_columns->set_optimize( value = abap_true ).
+
+          lo_column ?= lo_columns->get_column( c_ekorg ).
+          lo_column->set_long_text( text-026 ).
+          lo_columns->set_optimize( value = abap_true ).
+
+          lo_column ?= lo_columns->get_column( c_ebeln ).
+          lo_column->set_long_text( text-027 ).
+          lo_columns->set_optimize( value = abap_true ).
+
+          lo_column ?= lo_columns->get_column( c_ebelp ).
+          lo_column->set_long_text( text-028 ).
+          lo_columns->set_optimize( value = abap_true ).
+
+          IF p_rep NE abap_true.
+            lo_column ?= lo_columns->get_column( c_status ).
+            lo_column->set_long_text( text-030 ).
+            lo_columns->set_optimize( value = abap_true ).
+
+            lo_column ?= lo_columns->get_column( c_err_msg ).
+            lo_column->set_long_text( text-031 ).
+            lo_column->set_medium_text( space ) .
+            lo_column->set_short_text( space ) .
+            lo_columns->set_optimize( value = abap_true ).
+          ENDIF.
+        ENDIF.
+      CATCH cx_salv_not_found.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                 WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+        LEAVE LIST-PROCESSING.
+    ENDTRY.
+  ENDMETHOD.                    "build_fieldcat
+
+
+  METHOD get_data.
+
+    DATA: ls_report    TYPE ty_report,
+          lt_eord      TYPE STANDARD TABLE OF eord,
+          lt_eord_tmp  TYPE STANDARD TABLE OF eord,
+          ls_eord      TYPE eord,
+          lt_mara      TYPE STANDARD TABLE OF ty_mara_r,
+          ls_mara      TYPE ty_mara_r,
+          lt_marc      TYPE STANDARD TABLE OF ty_marc_r,
+          ls_marc      TYPE ty_marc_r,
+          lt_makt      TYPE STANDARD TABLE OF ty_makt,
+          ls_makt      TYPE ty_makt,
+          lt_lfa1      TYPE STANDARD TABLE OF ty_lfa1_r,
+          lt_lfa1_tmp  TYPE STANDARD TABLE OF ty_lfa1_r,
+          ls_lfa1      TYPE ty_lfa1_r,
+          lt_lfm1      TYPE STANDARD TABLE OF ty_lfm1,
+          ls_lfm1      TYPE ty_lfm1,
+          lt_eine      TYPE STANDARD TABLE OF ty_eine,
+          ls_eine      TYPE ty_eine,
+          lt_adr6      TYPE STANDARD TABLE OF ty_adr6,
+          ls_adr6      TYPE ty_adr6.
+
+    "Get data from EORD
+    SELECT * FROM eord
+      INTO TABLE lt_eord
+      WHERE matnr IN s_matnr
+      AND   werks IN s_werks
+      AND   vdatu IN s_vdatu
+      AND   bdatu IN s_bdatu
+      AND   lifnr IN s_lifnr
+      AND   flifn IN s_flifn
+      AND   notkz IN s_notkz
+      AND   ekorg IN s_ekorg
+      AND   autet IN s_autet.
+
+    IF sy-subrc = 0 AND lt_eord IS NOT INITIAL.
+      lt_eord_tmp = lt_eord.
+      SORT lt_eord_tmp BY matnr.
+      DELETE ADJACENT DUPLICATES FROM lt_eord_tmp
+      COMPARING matnr.
+      IF lt_eord_tmp IS NOT INITIAL.
+        SELECT matnr
+               mtart
+               matkl
+               meins
+               bstme
+               eannr
+               ean11
+               kzrev
+               kzkfg
+               xchpf
+               extwg
+               satnr
+               mstae
+          FROM mara
+          INTO TABLE lt_mara
+          FOR ALL ENTRIES IN lt_eord_tmp
+          WHERE matnr EQ lt_eord_tmp-matnr AND
+                matkl IN s_matkl.
+
+        IF sy-subrc = 0 AND lt_mara IS NOT INITIAL.
+          SORT lt_mara BY matnr.
+        ENDIF.
+      ENDIF.
+
+      CLEAR: lt_eord_tmp.
+      lt_eord_tmp = lt_eord.
+      SORT lt_eord_tmp BY matnr werks.
+      DELETE ADJACENT DUPLICATES FROM lt_eord_tmp
+      COMPARING matnr werks.
+      IF lt_eord_tmp IS NOT INITIAL.
+        SELECT matnr
+               werks
+               mmsta
+               ekgrp
+               dispr
+               dismm
+               dispo
+               plifz
+               webaz
+               disls
+               beskz
+               sobsl
+               minbe
+               eisbe
+               bstrf
+               ssqss
+               mtvfp
+               kautb
+               kordb
+               prctr
+               disgr
+               qmatv
+               abcin
+               sernp
+               servg
+               lgfsb
+               zzslday
+          FROM marc
+          INTO TABLE lt_marc
+          FOR ALL ENTRIES IN lt_eord_tmp
+          WHERE matnr EQ lt_eord_tmp-matnr
+           AND  werks EQ lt_eord_tmp-werks
+           AND  ekgrp IN s_ekgrp
+           AND  dismm IN s_dismm
+           AND  dispo IN s_dispo.
+
+        IF sy-subrc = 0 AND lt_marc IS NOT INITIAL.
+          SORT lt_marc BY matnr werks.
+        ENDIF.
+      ENDIF.
+
+      CLEAR: lt_eord_tmp.
+      lt_eord_tmp = lt_eord.
+      SORT lt_eord_tmp BY matnr.
+      DELETE ADJACENT DUPLICATES FROM lt_eord_tmp
+      COMPARING matnr.
+      IF lt_eord_tmp IS NOT INITIAL.
+        SELECT matnr
+               spras
+               maktx
+          FROM makt
+          INTO TABLE lt_makt
+          FOR ALL ENTRIES IN lt_eord_tmp
+          WHERE matnr = lt_eord_tmp-matnr
+          AND   spras = sy-langu.
+        IF sy-subrc = 0.
+          SORT lt_makt BY matnr.
+        ENDIF.
+      ENDIF.
+
+      CLEAR: lt_eord_tmp.
+      lt_eord_tmp = lt_eord.
+      SORT lt_eord_tmp BY lifnr.
+      DELETE ADJACENT DUPLICATES FROM lt_eord_tmp
+      COMPARING lifnr.
+      IF lt_eord_tmp IS NOT INITIAL.
+        SELECT lifnr
+               land1
+               name1
+               ort01
+               pstlz
+               regio
+               sortl
+               stras
+               adrnr
+               ktokk
+               kunnr
+               spras
+               telfx
+               vbund
+          FROM lfa1
+          INTO TABLE lt_lfa1
+          FOR ALL ENTRIES IN lt_eord_tmp
+          WHERE lifnr = lt_eord_tmp-lifnr.
+        IF sy-subrc EQ 0.
+          CLEAR lt_lfa1_tmp.
+          lt_lfa1_tmp = lt_lfa1.
+          SORT lt_lfa1_tmp BY adrnr.
+          DELETE ADJACENT DUPLICATES FROM lt_lfa1_tmp
+          COMPARING adrnr.
+          IF lt_lfa1_tmp IS NOT INITIAL.
+            SELECT addrnumber
+                   persnumber
+                   date_from
+                   consnumber
+                   smtp_addr
+              FROM adr6
+              INTO TABLE lt_adr6
+              FOR ALL ENTRIES IN lt_lfa1_tmp
+              WHERE addrnumber EQ lt_lfa1_tmp-adrnr
+              AND  flgdefault EQ abap_true.
+            IF sy-subrc EQ 0.
+              SORT lt_adr6 BY addrnumber.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+      CLEAR: lt_eord_tmp.
+      lt_eord_tmp = lt_eord.
+      SORT lt_eord_tmp BY lifnr ekorg.
+      DELETE ADJACENT DUPLICATES FROM lt_eord_tmp
+      COMPARING lifnr ekorg.
+      IF lt_eord_tmp IS NOT INITIAL.
+        SELECT lifnr
+               ekorg
+               waers
+               zterm
+               inco1
+               inco2
+               webre
+               kalsk
+               kzaut
+               xersy
+          FROM lfm1
+          INTO TABLE lt_lfm1
+          FOR ALL ENTRIES IN lt_eord_tmp
+          WHERE lifnr = lt_eord_tmp-lifnr
+          AND   ekorg = lt_eord_tmp-ekorg.
+        IF sy-subrc = 0.
+          SORT lt_lfm1 BY lifnr ekorg.
+        ENDIF.
+      ENDIF.
+
+      CLEAR: lt_eord_tmp.
+      lt_eord_tmp = lt_eord.
+      SORT lt_eord_tmp BY ekorg werks.
+      DELETE ADJACENT DUPLICATES FROM lt_eord_tmp
+      COMPARING ekorg werks.
+      IF lt_eord_tmp IS NOT INITIAL.
+        SELECT infnr
+               ekorg
+               werks
+               ekgrp
+               waers
+               minbm
+               norbm
+               aplfz
+               netpr
+               peinh
+               bprme
+               webre
+          FROM eine
+          INTO TABLE lt_eine
+          FOR ALL ENTRIES IN lt_eord_tmp
+          WHERE ekorg = lt_eord_tmp-ekorg
+          AND   werks = lt_eord_tmp-werks.
+        IF sy-subrc = 0.
+          SORT lt_eine BY ekorg werks.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    CLEAR: ls_report, ls_eord, ls_mara, ls_marc, ls_makt,
+           ls_lfa1, ls_lfm1, ls_eine, ls_adr6, lt_eord_tmp.
+    LOOP AT lt_eord INTO ls_eord.
+      ls_report-matnr = ls_eord-matnr.
+      ls_report-werks = ls_eord-werks.
+      ls_report-zeord = ls_eord-zeord.
+      ls_report-erdat = ls_eord-erdat.
+      ls_report-ernam = ls_eord-ernam.
+      ls_report-vdatu = ls_eord-vdatu.
+      ls_report-bdatu = ls_eord-bdatu.
+      ls_report-lifnr = ls_eord-lifnr.
+      ls_report-flifn = ls_eord-flifn.
+      ls_report-ebeln = ls_eord-ebeln.
+      ls_report-ebelp = ls_eord-ebelp.
+      ls_report-febel = ls_eord-febel.
+      ls_report-reswk = ls_eord-reswk.
+      ls_report-fresw = ls_eord-fresw.
+      ls_report-ematn = ls_eord-ematn.
+      ls_report-notkz = ls_eord-notkz.
+      ls_report-ekorg = ls_eord-ekorg.
+      ls_report-vrtyp = ls_eord-vrtyp.
+      ls_report-eortp = ls_eord-eortp.
+      ls_report-autet = ls_eord-autet.
+      ls_report-meins = ls_eord-meins.
+      ls_report-logsy = ls_eord-logsy.
+      ls_report-sobkz = ls_eord-sobkz.
+      ls_report-srm_contract_id  = ls_eord-srm_contract_id.
+      ls_report-srm_contract_itm = ls_eord-srm_contract_itm.
+
+      READ TABLE lt_mara INTO ls_mara
+      WITH KEY matnr = ls_eord-matnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_report-mtart   = ls_mara-mtart.
+        ls_report-matkl   = ls_mara-matkl.
+        ls_report-mstae   = ls_mara-mstae.
+        ls_report-meins_2 = ls_mara-meins.
+        ls_report-bstme   = ls_mara-bstme.
+        ls_report-eannr   = ls_mara-eannr.
+        ls_report-ean11   = ls_mara-ean11.
+        ls_report-kzrev   = ls_mara-kzrev.
+        ls_report-kzkfg   = ls_mara-kzkfg.
+        ls_report-xchpf   = ls_mara-xchpf.
+        ls_report-extwg   = ls_mara-extwg.
+        ls_report-satnr   = ls_mara-satnr.
+      ELSE.
+        CLEAR: ls_report, ls_eord, ls_mara.
+        CONTINUE.
+      ENDIF.
+
+      "Lead Supply Location
+      "Product Life Cycle
+      "Supply Location
+
+      READ TABLE lt_marc INTO ls_marc
+      WITH KEY matnr = ls_eord-matnr
+               werks = ls_eord-werks BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_report-ekgrp = ls_marc-ekgrp.
+        ls_report-mmsta = ls_marc-mmsta.
+        ls_report-dispr = ls_marc-dispr.
+        ls_report-dismm = ls_marc-dismm.
+        ls_report-dispo = ls_marc-dispo.
+        ls_report-plifz = ls_marc-plifz.
+        ls_report-webaz = ls_marc-webaz.
+        ls_report-disls = ls_marc-disls.
+        ls_report-beskz = ls_marc-beskz.
+        ls_report-sobsl = ls_marc-sobsl.
+        ls_report-minbe = ls_marc-minbe.
+        ls_report-eisbe = ls_marc-eisbe.
+        ls_report-bstrf = ls_marc-bstrf.
+        ls_report-ssqss = ls_marc-ssqss.
+        ls_report-mtvfp = ls_marc-mtvfp.
+        ls_report-kautb = ls_marc-kautb.
+        ls_report-kordb = ls_marc-kordb.
+        ls_report-prctr = ls_marc-prctr.
+        ls_report-disgr = ls_marc-disgr.
+        ls_report-qmatv = ls_marc-qmatv.
+        ls_report-abcin = ls_marc-abcin.
+        ls_report-sernp = ls_marc-sernp.
+        ls_report-lgfsb = ls_marc-lgfsb.
+        ls_report-servg = ls_marc-servg.
+        ls_report-zzslday = ls_marc-zzslday.
+      ELSE.
+        CLEAR: ls_report, ls_eord, ls_mara, ls_marc.
+        CONTINUE.
+      ENDIF.
+
+      READ TABLE lt_makt INTO ls_makt
+      WITH KEY matnr = ls_eord-matnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_report-maktx = ls_makt-maktx.
+      ENDIF.
+
+      READ TABLE lt_lfa1 INTO ls_lfa1
+      WITH KEY lifnr = ls_eord-lifnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_report-land1 = ls_lfa1-land1.
+        ls_report-name1 = ls_lfa1-name1.
+        ls_report-ort01 = ls_lfa1-ort01.
+        ls_report-pstlz = ls_lfa1-pstlz.
+        ls_report-regio = ls_lfa1-regio.
+        ls_report-sortl = ls_lfa1-sortl.
+        ls_report-stras = ls_lfa1-stras.
+        "Vendor Group key
+        ls_report-ktokk = ls_lfa1-ktokk.
+        ls_report-kunnr = ls_lfa1-kunnr.
+        ls_report-spras = ls_lfa1-spras.
+        ls_report-telfx = ls_lfa1-telfx.
+        ls_report-vbund = ls_lfa1-vbund.
+
+        READ TABLE lt_adr6 INTO ls_adr6
+        WITH KEY addrnumber = ls_lfa1-adrnr BINARY SEARCH.
+        IF sy-subrc = 0.
+          ls_report-email = ls_adr6-smtp_addr.
+        ENDIF.
+      ENDIF.
+
+      READ TABLE lt_lfm1 INTO ls_lfm1
+      WITH KEY lifnr = ls_eord-lifnr
+               ekorg = ls_eord-ekorg BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_report-waers = ls_lfm1-waers.
+        ls_report-zterm = ls_lfm1-zterm.
+        ls_report-inco1 = ls_lfm1-inco1.
+        ls_report-inco2 = ls_lfm1-inco2.
+        ls_report-webre = ls_lfm1-webre.
+        ls_report-kalsk = ls_lfm1-kalsk.
+        ls_report-kzaut = ls_lfm1-kzaut.
+        ls_report-xersy = ls_lfm1-xersy.
+      ENDIF.
+
+      READ TABLE lt_eine INTO ls_eine
+      WITH KEY ekorg = ls_eord-ekorg
+               werks = ls_eord-werks BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_report-infnr   = ls_eine-infnr.
+        ls_report-ekgrp_2 = ls_eine-ekgrp.
+        ls_report-waers_2 = ls_eine-waers.
+        ls_report-minbm   = ls_eine-minbm.
+        ls_report-norbm   = ls_eine-norbm.
+        ls_report-aplfz   = ls_eine-aplfz.
+        ls_report-netpr   = ls_eine-netpr.
+        ls_report-peinh   = ls_eine-peinh.
+        ls_report-bprme   = ls_eine-bprme.
+        "PIR Last forecast
+        ls_report-webre_2 = ls_eine-webre.
+      ENDIF.
+
+      APPEND: ls_report TO gt_report.
+      CLEAR: ls_report, ls_eord, ls_mara, ls_marc, ls_makt,
+             ls_lfa1, ls_lfm1, ls_eine.
+    ENDLOOP.
+
+  ENDMETHOD.                    "get_data
+
+ENDCLASS.                    "lcl_main IMPLEMENTATION
+***Unique***
