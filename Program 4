@@ -1,0 +1,1093 @@
+*&---------------------------------------------------------------------*
+*& Report  ZEHSR_DEL_IND
+*&---------------------------------------------------------------------*
+* Program Title    : DG Indicators to get Delivery Details             *
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 27-June-2024                                      *
+* RD / WI          : 0111002937 / 4000002299                           *
+* Transport        : BRDK9A3PLI                                        *
+* Transaction code : ZEHSDIR                                           *
+* Description      : DG Indicators to get Delivery Details             *
+************************************************************************
+REPORT zehsr_del_ind.
+
+*----------------------------------------------------------------------*
+*                        Data declaration
+*----------------------------------------------------------------------*
+INCLUDE zehsu_del_ind_top.
+
+*----------------------------------------------------------------------*
+*                        Selection screen
+*----------------------------------------------------------------------*
+INCLUDE zehsu_del_ind_sel.
+
+*----------------------------------------------------------------------*
+*                        Subroutines
+*----------------------------------------------------------------------*
+INCLUDE zehsu_del_ind_sub.
+
+*----------------------------------------------------------------------*
+*                        Initialization
+*----------------------------------------------------------------------*
+INITIALIZATION.
+  DATA(go_user) = NEW lcl_zehsr_del_ind( ).
+
+  IF go_user IS BOUND.
+    CALL METHOD go_user->xref_data.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                    AT SELECTION-SCREEN OUTPUT
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  IF go_user IS BOUND.
+    CALL METHOD go_user->obligatory_field.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                      AT SELECTION-SCREEN
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+  IF go_user IS BOUND.
+    CALL METHOD go_user->restrict_date.
+    CALL METHOD go_user->restrict_star.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*             AT SELECTION-SCREEN ON VALUE-REQUEST FOR
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR s_profl-low.
+  IF go_user IS BOUND.
+    CALL METHOD go_user->search_help.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                        Start-of-selection
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+  IF go_user IS BOUND.
+    CALL METHOD go_user->restrict_plants.
+    CALL METHOD go_user->process_data.
+    CALL METHOD go_user->alv_output.
+  ENDIF.
+
+****Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_DEL_IND_TOP
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 27-June-2024                                      *
+* RD / WI          : 0111002937 / 4000002299                           *
+* Transport        : BRDK9A3PLI                                        *
+* Transaction code : ZEHSDIR                                           *
+* Description      : DG Indicators to get Delivery Details             *
+*----------------------------------------------------------------------*
+CLASS lcl_zehsr_del_ind DEFINITION FINAL.
+  PUBLIC SECTION.
+
+    CLASS-METHODS: xref_data,
+      obligatory_field,
+      restrict_date,
+      restrict_star,
+      search_help,
+      restrict_plants,
+      process_data,
+      alv_output.
+
+ENDCLASS.
+
+*C----Types declaration
+TYPES: BEGIN OF ty_final,
+         matnr          TYPE matnr,           "C----Material
+         maktx          TYPE maktx,           "C----Matl Desc
+         profl          TYPE adge_profl,      "C----DGIndProfile
+         profld         TYPE adge_prfld,      "C----Description
+         werks          TYPE werks_d,         "C----Plant
+         name1          TYPE name1,           "C----Plant description
+         vkorg          TYPE vkorg,           "C----Sales organization
+         vtext          TYPE vtxtk,           "C----Organization Description
+         matkl          TYPE matkl,           "C----Material Group
+         wgbez          TYPE wgbez,           "C----Material Group Description
+         mvgr4          TYPE mvgr4,           "C----Material Group 4
+         bezei          TYPE bezei40,         "C----Employee name
+         ekgrp          TYPE ekgrp,           "C----Purchasing group
+         eknam          TYPE eknam,           "C----Description of purchasing group
+         dispo          TYPE dispo,           "C----MRP Controller
+         dsnam          TYPE dsnam,           "C----Name of MRP controller
+         vbeln          TYPE vbeln_vl,        "C----Delivery
+         posnr          TYPE posnr_vl,        "C----Item
+         routbez        TYPE routbez,         "C----Route Shipped by
+         carrier        TYPE ztmscarrier,     "C----Carrier
+         vsbed_bez      TYPE vsbed_bez,       "C----Shipping conditions
+         trackingnumber TYPE ztrackingnumber, "C----Tracking Number(AWB)
+         ort01          TYPE ort01_gp,        "C----Destination City
+         landx          TYPE landx,           "C----Destination Country
+         lfimg          TYPE lfimg,           "C----Delivery Qty
+         meins          TYPE meins,           "C----Base Unit
+       END OF ty_final.
+
+*C----Global Data declaration
+DATA: gt_final TYPE STANDARD TABLE OF ty_final,
+      gv_werks TYPE werks_d,
+      gv_matnr TYPE matnr,
+      gv_profl TYPE adge_profl,
+      gv_wadat TYPE wadat_ist,
+      gt_xref  TYPE STANDARD TABLE OF ztxa_xref.
+
+*C----Constant declaration
+CONSTANTS: c_zdeliv_type    TYPE rvari_vnam VALUE 'ZDELIV_TYPE',    "C----Delivery type
+           c_zmonths        TYPE rvari_vnam VALUE 'ZMONTHS',        "C----Delivery type
+           c_zplants        TYPE rvari_vnam VALUE 'ZPLANTS',        "C----Delivery type
+           c_i              TYPE char1      VALUE 'I',              "C----Inclusive
+           c_eq             TYPE char2      VALUE 'EQ',             "C----Equal
+           c_s              TYPE char1      VALUE 'S',              "C----Success
+           c_e              TYPE char1      VALUE 'E',              "C----Error / English
+           c_x              TYPE ddbool_d   VALUE 'X',              "C----Display
+           c_001            TYPE profl      VALUE '001',            "C----DG Indicator Profile
+           c_tdg41          TYPE checktable VALUE 'TDG41',          "C----DG Indicator Profiles for Material Master
+           c_profl_field    TYPE fieldname  VALUE 'PROFL',          "C----DG Ind Profile Field
+           c_matnr          TYPE lvc_fname  VALUE 'MATNR',          "C----Material number
+           c_maktx          TYPE lvc_fname  VALUE 'MAKTX',          "C----Matl Desc
+           c_profl          TYPE lvc_fname  VALUE 'PROFL',          "C----DG Ind Profile
+           c_profld         TYPE lvc_fname  VALUE 'PROFLD',         "C----Description
+           c_vbeln          TYPE lvc_fname  VALUE 'VBELN',          "C----Delivery
+           c_werks          TYPE lvc_fname  VALUE 'WERKS',          "C----Plant
+           c_name1          TYPE lvc_fname  VALUE 'NAME1',          "C----Plant description
+           c_vkorg          TYPE lvc_fname  VALUE 'VKORG',          "C----Sales organization
+           c_vtext          TYPE lvc_fname  VALUE 'VTEXT',          "C----Organization Description
+           c_matkl          TYPE lvc_fname  VALUE 'MATKL',          "C----Material Group
+           c_mvgr4          TYPE lvc_fname  VALUE 'MVGR4',          "C----Material Group 4
+           c_bezei          TYPE lvc_fname  VALUE 'BEZEI',          "C----Employee name
+           c_ekgrp          TYPE lvc_fname  VALUE 'EKGRP',          "C----Purchasing Group
+           c_eknam          TYPE lvc_fname  VALUE 'EKNAM',          "C----Description of purchasing group
+           c_dsnam          TYPE lvc_fname  VALUE 'DSNAM',          "C----Name of MRP controller
+           c_wgbez          TYPE lvc_fname  VALUE 'WGBEZ',          "C----Material Group Description
+           c_dispo          TYPE lvc_fname  VALUE 'DISPO',          "C----MRP Controller
+           c_routbez        TYPE lvc_fname  VALUE 'ROUTBEZ',        "C----Route Shipped by
+           c_carrier        TYPE lvc_fname  VALUE 'CARRIER',        "C----Carrier
+           c_vsbed_bez      TYPE lvc_fname  VALUE 'VSBED_BEZ',      "C----Shipping conditions
+           c_trackingnumber TYPE lvc_fname  VALUE 'TRACKINGNUMBER', "C----Tracking Number(AWB)
+           c_ort01          TYPE lvc_fname  VALUE 'ORT01',          "C----Destination City
+           c_landx          TYPE lvc_fname  VALUE 'LANDX',          "C----Destination Country
+           c_posnr          TYPE lvc_fname  VALUE 'POSNR',          "C----Item
+           c_meins          TYPE lvc_fname  VALUE 'MEINS',          "C----Base Unit
+           c_zero           TYPE char1      VALUE '0',              "C----Zero
+           c_star           TYPE char1      VALUE '*',              "C----Star
+           c_lfimg          TYPE lvc_fname  VALUE 'LFIMG',          "C----Delivery Qty
+           c_wadat          TYPE char12     VALUE 'S_WADAT-HIGH'.   "C----PGI Complete Date High value
+****Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_DEL_IND_SEL
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 27-June-2024                                      *
+* RD / WI          : 0111002937 / 4000002299                           *
+* Transport        : BRDK9A3PLI                                        *
+* Transaction code : ZEHSDIR                                           *
+* Description      : DG Indicators to get Delivery Details             *
+*----------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-040. "C-----Plant related delivery details
+SELECT-OPTIONS: s_werks FOR gv_werks NO INTERVALS OBLIGATORY, "C-----Plant
+                s_matnr FOR gv_matnr NO INTERVALS,            "C-----Material number
+                s_profl FOR gv_profl NO INTERVALS,            "C-----DG Profile
+                s_wadat FOR gv_wadat NO-EXTENSION OBLIGATORY. "C-----PGI Completion from Date
+SELECTION-SCREEN END OF BLOCK b1.
+****Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_DEL_IND_SUB
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 27-June-2024                                      *
+* RD / WI          : 0111002937 / 4000002299                           *
+* Transport        : BRDK9A3PLI                                        *
+* Transaction code : ZEHSDIR                                           *
+* Description      : DG Indicators to get Delivery Details             *
+*----------------------------------------------------------------------*
+CLASS lcl_zehsr_del_ind IMPLEMENTATION.
+  METHOD xref_data.
+    DATA lt_varnames TYPE STANDARD TABLE OF ztxa_varnames.
+
+    CLEAR: lt_varnames,
+           gt_xref.
+    lt_varnames = VALUE #( ( varname = c_zdeliv_type )
+                           ( varname = c_zplants )
+                           ( varname = c_zmonths ) ).
+    IF lt_varnames IS NOT INITIAL.
+      CLEAR gt_xref.
+      CALL FUNCTION 'ZXA_GET_MULTI_XREF_VALUES'
+        TABLES
+          t_varnames            = lt_varnames
+          xref_tab              = gt_xref
+        EXCEPTIONS
+          no_values_found       = 1
+          invalid_variable_name = 2
+          no_vrariable_in_input = 3
+          OTHERS                = 4.
+      IF sy-subrc NE 0.
+        MESSAGE text-041 TYPE c_e. "C----No XREF values found
+      ENDIF.
+    ENDIF.
+    CLEAR lt_varnames.
+  ENDMETHOD.
+  METHOD obligatory_field.
+*C----TO date is obligatory in the field PGI Completion
+    LOOP AT SCREEN.
+      IF screen-name = c_wadat.
+        screen-required = 1.
+        MODIFY SCREEN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD restrict_date.
+    DATA: lv_months       TYPE i,
+          lv_mon_restrict TYPE i.
+
+    IF s_wadat-low IS NOT INITIAL
+      AND s_wadat-high IS NOT INITIAL.
+      CLEAR: lv_mon_restrict,
+             lv_months.
+      DATA(ls_xref) = VALUE #( gt_xref[ varname = c_zmonths ] OPTIONAL ).
+      IF ls_xref-value1 IS NOT INITIAL.
+        lv_mon_restrict = ls_xref-value1.
+      ENDIF.
+      CALL FUNCTION 'HR_99S_INTERVAL_BETWEEN_DATES'
+        EXPORTING
+          begda    = s_wadat-low
+          endda    = s_wadat-high
+        IMPORTING
+          c_months = lv_months.
+      IF lv_months > lv_mon_restrict.
+        MESSAGE e003(zenh1) WITH lv_mon_restrict. "C----Date range should not exceed & months
+      ENDIF.
+      CLEAR: lv_mon_restrict,
+             lv_months,
+             ls_xref.
+    ENDIF.
+  ENDMETHOD.
+*C----Should not allow user to enter *
+*C----in Plant field of selection screen
+  METHOD restrict_star.
+    IF s_werks-low = c_star.
+      MESSAGE text-043 TYPE c_e. "C----Plant * does not exist in the database or in the archive
+    ENDIF.
+  ENDMETHOD.
+  METHOD search_help.
+    CALL FUNCTION 'F4TOOL_CHECKTABLE_HELP'
+      EXPORTING
+        checktable       = c_tdg41
+        retfield         = c_profl_field
+        display          = c_x
+      EXCEPTIONS
+        tabl_not_exists  = 1
+        field_not_exists = 2
+        illegal_call     = 3
+        OTHERS           = 4.
+    IF sy-subrc NE 0.
+      MESSAGE text-039 TYPE c_e. "C----Value request error
+    ENDIF.
+  ENDMETHOD.
+  METHOD restrict_plants.
+    DATA: lv_lines          TYPE i,
+          lv_plant_restrict TYPE i.
+
+    IF s_werks IS NOT INITIAL.
+      CLEAR: lv_lines,
+             lv_plant_restrict.
+      DATA(ls_ref) = VALUE #( gt_xref[ varname = c_zplants ] OPTIONAL ).
+      IF ls_ref-value1 IS NOT INITIAL.
+        lv_plant_restrict = ls_ref-value1.
+      ENDIF.
+      lv_lines = lines( s_werks ).
+      IF lv_lines > lv_plant_restrict.
+        MESSAGE s004(zenh1) WITH lv_plant_restrict DISPLAY LIKE c_e. "C----Please enter up to & plants
+        LEAVE LIST-PROCESSING.
+      ENDIF.
+      CLEAR: lv_lines,
+             lv_plant_restrict,
+             ls_ref.
+    ENDIF.
+  ENDMETHOD.
+  METHOD process_data.
+*C----Local data declaration
+    DATA: ls_final      TYPE ty_final,
+          lt_del_qty    TYPE STANDARD TABLE OF ty_final,
+          lv_len        TYPE i,
+          lt_land1      TYPE RANGE OF land1,
+          ls_land1      LIKE LINE OF lt_land1,
+          lt_ship_point TYPE RANGE OF vstel,
+          ls_ship_point LIKE LINE OF lt_ship_point,
+          lt_sales_org  TYPE RANGE OF vkorg,
+          ls_sales_org  LIKE LINE OF lt_sales_org,
+          lt_deliv_type TYPE RANGE OF lfart,
+          ls_deliv_type LIKE LINE OF lt_deliv_type.
+
+    CLEAR: ls_deliv_type,
+           lt_deliv_type.
+    ls_deliv_type-sign = c_i.
+    ls_deliv_type-option = c_eq.
+    LOOP AT gt_xref INTO DATA(ls_xref) WHERE varname = c_zdeliv_type.
+      IF ls_xref-value1 IS NOT INITIAL.
+        ls_deliv_type-low = ls_xref-value1.
+        APPEND ls_deliv_type TO lt_deliv_type.
+      ENDIF.
+      CLEAR: ls_xref,
+             ls_deliv_type-low.
+    ENDLOOP.
+
+    SELECT werks,     "C----Plant
+           vstel      "C----Proposed shipping point
+      FROM tvstz
+      INTO TABLE @DATA(lt_tvstz)
+      WHERE werks IN @s_werks.
+    IF sy-subrc = 0.
+      SORT lt_tvstz BY vstel.
+      DELETE ADJACENT DUPLICATES FROM lt_tvstz COMPARING vstel.
+      CLEAR: ls_ship_point,
+             lt_ship_point.
+      ls_ship_point-sign = c_i.
+      ls_ship_point-option = c_eq.
+      LOOP AT lt_tvstz INTO DATA(ls_tvstz).
+        IF ls_tvstz-vstel IS NOT INITIAL.
+          ls_ship_point-low = ls_tvstz-vstel.
+          APPEND ls_ship_point TO lt_ship_point.
+        ENDIF.
+        CLEAR: ls_tvstz,
+               ls_ship_point-low.
+      ENDLOOP.
+    ENDIF.
+
+    SELECT vbeln,     "C----Delivery
+           vkorg,     "C----Sales Organization
+           lfart,     "C----Delivery Type
+           route,     "C----Route
+           vsbed,     "C----Shipping Cond.
+           kunnr,     "C----Ship-to party
+           wadat_ist  "C----Actual Goods Movement Date
+      FROM likp
+      INTO TABLE @DATA(lt_likp)
+      WHERE vstel IN @lt_ship_point
+      AND wadat_ist IN @s_wadat
+      AND lfart IN @lt_deliv_type.
+    IF sy-subrc = 0 AND lt_likp IS NOT INITIAL.
+      SORT lt_likp BY vbeln.
+      SELECT vbeln, "C----Delivery
+             posnr, "C----Delivery Item
+             matnr, "C----Material number
+             werks, "C----Plant
+             lfimg, "C----Delivery Qty
+             meins, "C----Base Unit of Measure
+             vgbel, "C----Document number of the reference document
+             vtweg  "C----Distribution Channel
+        FROM lips
+        INTO TABLE @DATA(lt_lips)
+        FOR ALL ENTRIES IN @lt_likp
+        WHERE vbeln = @lt_likp-vbeln
+        AND matnr IN @s_matnr
+        AND werks IN @s_werks.
+      IF sy-subrc = 0 AND lt_lips IS NOT INITIAL.
+        DATA(lt_lips_temp) = lt_lips.
+        SORT lt_lips_temp BY vgbel.
+        DELETE ADJACENT DUPLICATES FROM lt_lips_temp COMPARING vgbel.
+        IF lt_lips_temp IS NOT INITIAL.
+          SELECT vbeln, "C----Sales document
+                 vtweg  "C----Distribution Channel
+            FROM vbak
+            INTO TABLE @DATA(lt_vbak)
+            FOR ALL ENTRIES IN @lt_lips_temp
+            WHERE vbeln = @lt_lips_temp-vgbel.
+          IF sy-subrc = 0 AND lt_vbak IS NOT INITIAL.
+            SORT lt_vbak BY vbeln.
+          ENDIF.
+        ENDIF.
+
+        DATA(lt_temp) = lt_likp.
+        SORT lt_temp BY vkorg.
+        DELETE ADJACENT DUPLICATES FROM lt_temp COMPARING vkorg.
+        CLEAR: ls_sales_org,
+               lt_sales_org.
+        ls_sales_org-sign = c_i.
+        ls_sales_org-option = c_eq.
+        LOOP AT lt_temp INTO DATA(ls_lik).
+          IF ls_lik-vkorg IS NOT INITIAL.
+            ls_sales_org-low = ls_lik-vkorg.
+            APPEND ls_sales_org TO lt_sales_org.
+          ENDIF.
+          CLEAR: ls_lik,
+                 ls_sales_org-low.
+        ENDLOOP.
+
+        CLEAR lt_lips_temp.
+        lt_lips_temp = lt_lips.
+        SORT lt_lips_temp BY matnr
+                             vtweg.
+        DELETE ADJACENT DUPLICATES FROM lt_lips_temp COMPARING matnr
+                                                               vtweg.
+        IF lt_lips_temp IS NOT INITIAL.
+          SELECT matnr, "C----Material
+                 vkorg, "C----Sales org
+                 vtweg, "C----Distribution channel
+                 mvgr4  "C----Material Group 4
+            FROM mvke
+            INTO TABLE @DATA(lt_mvke)
+            FOR ALL ENTRIES IN @lt_lips_temp
+            WHERE matnr = @lt_lips_temp-matnr
+            AND vkorg IN @lt_sales_org
+            AND vtweg = @lt_lips_temp-vtweg.
+          IF sy-subrc = 0 AND lt_mvke IS NOT INITIAL.
+            SORT lt_mvke BY matnr
+                            vkorg
+                            vtweg.
+            DATA(lt_mvke_temp) = lt_mvke.
+            SORT lt_mvke_temp BY mvgr4.
+            DELETE ADJACENT DUPLICATES FROM lt_mvke_temp COMPARING mvgr4.
+            IF lt_mvke_temp IS NOT INITIAL.
+              SELECT spras, "C----Language
+                     mvgr4, "C----Material Group 4
+                     bezei  "C----Description
+                FROM tvm4t
+                INTO TABLE @DATA(lt_tvm4t)
+                FOR ALL ENTRIES IN @lt_mvke_temp
+                WHERE spras = @c_e
+                AND mvgr4 = @lt_mvke_temp-mvgr4.
+              IF sy-subrc = 0.
+                SORT lt_tvm4t BY mvgr4.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+        CLEAR lt_lips_temp.
+        lt_lips_temp = lt_lips.
+        SORT lt_lips_temp BY werks.
+        DELETE ADJACENT DUPLICATES FROM lt_lips_temp COMPARING werks.
+        IF lt_lips_temp IS NOT INITIAL.
+          SELECT werks, "C----Plant
+                 name1, "C----Name 1
+                 spras  "C----Language
+            FROM t001w
+            INTO TABLE @DATA(lt_t001w)
+            FOR ALL ENTRIES IN @lt_lips_temp
+            WHERE werks = @lt_lips_temp-werks
+            AND spras = @c_e.
+          IF sy-subrc = 0.
+            SORT lt_t001w BY werks.
+          ENDIF.
+
+          CLEAR lt_lips_temp.
+          lt_lips_temp = lt_lips.
+          SORT lt_lips_temp BY matnr.
+          DELETE ADJACENT DUPLICATES FROM lt_lips_temp COMPARING matnr.
+          IF lt_lips_temp IS NOT INITIAL.
+            SELECT matnr, "C----Material
+                   matkl, "C----Material Group
+                   xchpf, "C----Batch management requirement indicator
+                   profl  "C----DG Ind Profile
+              FROM mara
+              INTO TABLE @DATA(lt_mara)
+              FOR ALL ENTRIES IN @lt_lips_temp
+              WHERE matnr = @lt_lips_temp-matnr
+              AND profl IN @s_profl.
+            IF sy-subrc = 0 AND lt_mara IS NOT INITIAL.
+*C----Delete materials with DG indicator profile 001 or blank
+              DELETE lt_mara WHERE profl = c_001 OR profl = space.
+              IF lt_mara IS NOT INITIAL.
+                SORT lt_mara BY matnr.
+                SELECT matnr, "C----Material
+                       spras, "C----Language
+                       maktx  "C----Description
+                  FROM makt
+                  INTO TABLE @DATA(lt_makt)
+                  FOR ALL ENTRIES IN @lt_mara
+                  WHERE matnr = @lt_mara-matnr
+                  AND spras = @c_e.
+                IF sy-subrc = 0.
+                  SORT lt_makt BY matnr.
+                ENDIF.
+
+                DATA(lt_mara_temp) = lt_mara.
+                SORT lt_mara_temp BY profl.
+                DELETE ADJACENT DUPLICATES FROM lt_mara_temp COMPARING profl.
+                IF lt_mara_temp IS NOT INITIAL.
+                  SELECT dgspras, "C----Language
+                         profl,   "C----DG Ind Profile
+                         profld   "C----Description
+                    FROM tdg42
+                    INTO TABLE @DATA(lt_tdg42)
+                    FOR ALL ENTRIES IN @lt_mara_temp
+                    WHERE dgspras = @c_e
+                    AND profl = @lt_mara_temp-profl.
+                  IF sy-subrc = 0.
+                    SORT lt_tdg42 BY profl.
+                  ENDIF.
+                ENDIF.
+
+                SELECT matnr, "C----Material
+                       werks, "C----Plant
+                       ekgrp, "C----Purchasing Group
+                       dispo  "C----MRP Controller (Materials Planner)
+                  FROM marc
+                  INTO TABLE @DATA(lt_marc)
+                  FOR ALL ENTRIES IN @lt_mara
+                  WHERE matnr = @lt_mara-matnr
+                  AND werks IN @s_werks.
+                IF sy-subrc = 0.
+                  SORT lt_marc BY matnr
+                                  werks.
+                  DATA(lt_marc_temp) = lt_marc.
+                  SORT lt_marc_temp BY ekgrp.
+                  DELETE ADJACENT DUPLICATES FROM lt_marc_temp COMPARING ekgrp.
+                  IF lt_marc_temp IS NOT INITIAL.
+                    SELECT ekgrp, "C----Purchasing Group
+                           eknam  "C----Description of purchasing group
+                      FROM t024
+                      INTO TABLE @DATA(lt_t024)
+                      FOR ALL ENTRIES IN @lt_marc_temp
+                      WHERE ekgrp = @lt_marc_temp-ekgrp.
+                    IF sy-subrc = 0.
+                      SORT lt_t024 BY ekgrp.
+                    ENDIF.
+                  ENDIF.
+
+                  CLEAR lt_marc_temp.
+                  lt_marc_temp = lt_marc.
+                  SORT lt_marc_temp BY werks
+                                       dispo.
+                  DELETE ADJACENT DUPLICATES FROM lt_marc_temp COMPARING werks
+                                                                         dispo.
+                  IF lt_marc_temp IS NOT INITIAL.
+                    SELECT werks, "C----Plant
+                           dispo, "C----MRP Controller (Materials Planner)
+                           dsnam  "C----Name of MRP controller
+                      FROM t024d
+                      INTO TABLE @DATA(lt_t024d)
+                      FOR ALL ENTRIES IN @lt_marc_temp
+                      WHERE werks IN @s_werks
+                      AND dispo = @lt_marc_temp-dispo.
+                    IF sy-subrc = 0.
+                      SORT lt_t024d BY werks
+                                       dispo.
+                    ENDIF.
+                  ENDIF.
+                ENDIF.
+
+                CLEAR lt_mara_temp.
+                lt_mara_temp = lt_mara.
+                SORT lt_mara_temp BY matkl.
+                DELETE ADJACENT DUPLICATES FROM lt_mara_temp COMPARING matkl.
+                IF lt_mara_temp IS NOT INITIAL.
+                  SELECT spras, "C----Language Key
+                         matkl, "C----Material Group
+                         wgbez  "C----Material Group Description
+                    FROM t023t
+                    INTO TABLE @DATA(lt_t023t)
+                    FOR ALL ENTRIES IN @lt_mara_temp
+                    WHERE spras = @c_e
+                    AND matkl = @lt_mara_temp-matkl.
+                  IF sy-subrc = 0.
+                    SORT lt_t023t BY matkl.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+        DATA(lt_likp_temp) = lt_likp.
+        SORT lt_likp_temp BY vkorg.
+        DELETE ADJACENT DUPLICATES FROM lt_likp_temp COMPARING vkorg.
+        IF lt_likp_temp IS NOT INITIAL.
+          SELECT spras, "C----Language
+                 vkorg, "C----Sales Org.
+                 vtext  "C----Name
+            FROM tvkot
+            INTO TABLE @DATA(lt_tvkot)
+            FOR ALL ENTRIES IN @lt_likp_temp
+            WHERE spras = @c_e
+            AND vkorg = @lt_likp_temp-vkorg.
+          IF sy-subrc = 0.
+            SORT lt_tvkot BY vkorg.
+          ENDIF.
+        ENDIF.
+
+        CLEAR lt_likp_temp.
+        lt_likp_temp = lt_likp.
+        SORT lt_likp_temp BY route.
+        DELETE ADJACENT DUPLICATES FROM lt_likp_temp COMPARING route.
+        IF lt_likp_temp IS NOT INITIAL.
+          SELECT spras, "C----Language
+                 route, "C----Route
+                 bezei  "C----Description
+            FROM tvrot
+            INTO TABLE @DATA(lt_tvrot)
+            FOR ALL ENTRIES IN @lt_likp_temp
+            WHERE spras = @c_e
+            AND route = @lt_likp_temp-route.
+          IF sy-subrc = 0.
+            SORT lt_tvrot BY route.
+          ENDIF.
+        ENDIF.
+
+        CLEAR lt_likp_temp.
+        lt_likp_temp = lt_likp.
+        SORT lt_likp_temp BY vsbed.
+        DELETE ADJACENT DUPLICATES FROM lt_likp_temp COMPARING vsbed.
+        IF lt_likp_temp IS NOT INITIAL.
+          SELECT spras, "C----Language Key
+                 vsbed, "C----Shipping Cond.
+                 vtext  "C----Shipping conditions
+            FROM tvsbt
+            INTO TABLE @DATA(lt_tvsbt)
+            FOR ALL ENTRIES IN @lt_likp_temp
+            WHERE spras = @c_e
+            AND vsbed = @lt_likp_temp-vsbed.
+          IF sy-subrc = 0.
+            SORT lt_tvsbt BY vsbed.
+          ENDIF.
+        ENDIF.
+
+        SELECT venum, "C----Internal HU no.
+               vbeln  "C----Delivery
+          FROM vepo
+          INTO TABLE @DATA(lt_vepo)
+          FOR ALL ENTRIES IN @lt_likp
+          WHERE vbeln = @lt_likp-vbeln.
+        IF sy-subrc = 0 AND lt_vepo IS NOT INITIAL.
+          SORT lt_vepo BY vbeln.
+          DATA(lt_vepo_temp) = lt_vepo.
+          SORT lt_vepo_temp BY venum
+                               vbeln.
+          DELETE ADJACENT DUPLICATES FROM lt_vepo_temp COMPARING venum
+                                                                 vbeln.
+          IF lt_vepo_temp IS NOT INITIAL.
+            SELECT trackingnumber, "C----Tracking Number
+                   venum,          "C----Internal Handling Unit Number
+                   carrier,        "C----Carrier
+                   vbeln           "C----Sales and Distribution Document Number
+              FROM ztrd_splbl
+              INTO TABLE @DATA(lt_ztrd_splbl)
+              FOR ALL ENTRIES IN @lt_vepo_temp
+              WHERE venum = @lt_vepo_temp-venum
+              AND vbeln = @lt_vepo_temp-vbeln.
+            IF sy-subrc = 0.
+              SORT lt_ztrd_splbl BY venum
+                                    vbeln.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+        CLEAR lt_likp_temp.
+        lt_likp_temp = lt_likp.
+        SORT lt_likp_temp BY kunnr.
+        DELETE ADJACENT DUPLICATES FROM lt_likp_temp COMPARING kunnr.
+        IF lt_likp_temp IS NOT INITIAL.
+          SELECT kunnr, "C----Customer
+                 land1, "C----Destination Country
+                 ort01  "C----Destination City
+            FROM kna1
+            INTO TABLE @DATA(lt_kna1)
+            FOR ALL ENTRIES IN @lt_likp_temp
+            WHERE kunnr = @lt_likp_temp-kunnr.
+          IF sy-subrc = 0 AND lt_kna1 IS NOT INITIAL.
+            SORT lt_kna1 BY kunnr.
+            DATA(lt_kna1_temp) = lt_kna1.
+            SORT lt_kna1_temp BY land1.
+            DELETE ADJACENT DUPLICATES FROM lt_kna1_temp COMPARING land1.
+            CLEAR: ls_land1,
+                   lt_land1.
+            ls_land1-sign = c_i.
+            ls_land1-option = c_eq.
+            LOOP AT lt_kna1_temp INTO DATA(ls_kna).
+              IF ls_kna-land1 IS NOT INITIAL.
+                ls_land1-low = ls_kna-land1.
+                APPEND ls_land1 TO lt_land1.
+              ENDIF.
+              CLEAR: ls_land1-low,
+                     ls_kna.
+            ENDLOOP.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    IF lt_land1 IS NOT INITIAL.
+      SELECT spras,
+             land1,
+             landx
+        FROM t005t
+        INTO TABLE @DATA(lt_t005t)
+        WHERE spras = @c_e
+        AND land1 IN @lt_land1.
+      IF sy-subrc = 0.
+        SORT lt_t005t BY land1.
+      ENDIF.
+    ENDIF.
+
+*C----Whenever Batch management is X for a material,
+*C----program should search for a document having this material
+*C----and add the respective Delivery Quantities.
+    SORT lt_lips BY vbeln posnr.
+    LOOP AT lt_lips INTO DATA(ls_lip).
+      DATA(ls_mar) = VALUE #( lt_mara[ matnr = ls_lip-matnr ] OPTIONAL ).
+      IF ls_mar-xchpf = c_x.
+        ls_final-matnr = ls_lip-matnr.
+        ls_final-vbeln = ls_lip-vbeln.
+        ls_final-lfimg = ls_lip-lfimg.
+        COLLECT ls_final INTO lt_del_qty.
+      ENDIF.
+      CLEAR: ls_final,
+             ls_mar,
+             ls_lip.
+    ENDLOOP.
+
+*C----Populate final table
+    SORT lt_lips BY matnr.
+    SORT lt_likp BY vbeln.
+    SORT lt_del_qty BY vbeln.
+    CLEAR ls_final.
+    LOOP AT lt_lips INTO DATA(ls_lips).
+      ls_final-posnr = ls_lips-posnr.                             "C----Item
+      ls_final-werks = ls_lips-werks.                             "C----Plant
+      ls_final-meins = ls_lips-meins.                             "C----Base Unit
+      DATA(ls_del_qty) = VALUE #( lt_del_qty[ vbeln = ls_lips-vbeln ] OPTIONAL ).
+      IF ls_del_qty-lfimg IS NOT INITIAL.
+        ls_final-lfimg = ls_del_qty-lfimg.                        "C----Total Delivery Qty
+      ELSE.
+        ls_final-lfimg = ls_lips-lfimg.                           "C----Delivery Qty
+      ENDIF.
+      DATA(ls_likp) = VALUE #( lt_likp[ vbeln = ls_lips-vbeln ] OPTIONAL ).
+      IF ls_likp IS NOT INITIAL.
+        ls_final-vbeln     = ls_likp-vbeln.                       "C----Delivery
+        ls_final-vkorg     = ls_likp-vkorg.                       "C----Sales Organization
+        DATA(ls_mvke) = VALUE #( lt_mvke[ matnr = ls_lips-matnr
+                                          vkorg = ls_likp-vkorg
+                                          vtweg = ls_lips-vtweg ] OPTIONAL ).
+        IF ls_mvke-mvgr4 IS NOT INITIAL.
+          ls_final-mvgr4 = ls_mvke-mvgr4.                         "C----Material Group 4
+          DATA(ls_tvm4t) = VALUE #( lt_tvm4t[ mvgr4 = ls_mvke-mvgr4 ] OPTIONAL ).
+          IF ls_tvm4t-bezei IS NOT INITIAL.
+            ls_final-bezei = ls_tvm4t-bezei.                      "C----Employee name
+          ENDIF.
+        ENDIF.
+        DATA(ls_tvkot) = VALUE #( lt_tvkot[ vkorg = ls_likp-vkorg ] OPTIONAL ).
+        IF ls_tvkot-vtext IS NOT INITIAL.
+          ls_final-vtext = ls_tvkot-vtext.                        "C----Organization Description
+        ENDIF.
+        DATA(ls_tvrot) = VALUE #( lt_tvrot[ route = ls_likp-route ] OPTIONAL ).
+        IF ls_tvrot-bezei IS NOT INITIAL.
+          ls_final-routbez = ls_tvrot-bezei.                      "C----Route Shipped by
+        ENDIF.
+        DATA(ls_vepo) = VALUE #( lt_vepo[ vbeln = ls_likp-vbeln ] OPTIONAL ).
+        IF ls_vepo IS NOT INITIAL.
+          DATA(ls_ztrd_splbl) = VALUE #( lt_ztrd_splbl[ venum = ls_vepo-venum
+                                                        vbeln = ls_vepo-vbeln ] OPTIONAL ).
+          IF ls_ztrd_splbl IS NOT INITIAL.
+            ls_final-carrier        = ls_ztrd_splbl-carrier.        "C----Carrier
+            ls_final-trackingnumber = ls_ztrd_splbl-trackingnumber. "C----Tracking Number(AWB)
+          ENDIF.
+        ENDIF.
+        DATA(ls_tvsbt) = VALUE #( lt_tvsbt[ vsbed = ls_likp-vsbed ] OPTIONAL ).
+        IF ls_tvsbt-vtext IS NOT INITIAL.
+          ls_final-vsbed_bez = ls_tvsbt-vtext.                      "C----Shipping conditions
+        ENDIF.
+        DATA(ls_kna1) = VALUE #( lt_kna1[ kunnr = ls_likp-kunnr ] OPTIONAL ).
+        IF ls_kna1 IS NOT INITIAL.
+          ls_final-ort01 = ls_kna1-ort01.                   "C----Destination City
+          DATA(ls_t005t) = VALUE #( lt_t005t[ land1 = ls_kna1-land1 ] OPTIONAL ).
+          IF ls_t005t-landx IS NOT INITIAL.
+            ls_final-landx = ls_t005t-landx.                "C----Destination Country
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      DATA(ls_t001w) = VALUE #( lt_t001w[ werks = ls_lips-werks ] OPTIONAL ).
+      IF ls_t001w-name1 IS NOT INITIAL.
+        ls_final-name1 = ls_t001w-name1.                      "C----Plant description
+      ENDIF.
+      DATA(ls_mara) = VALUE #( lt_mara[ matnr = ls_lips-matnr ] OPTIONAL ).
+      IF ls_mara IS NOT INITIAL.
+        ls_final-matnr = ls_mara-matnr.                       "C----Material
+        ls_final-matkl = ls_mara-matkl.                       "C----Material Group
+        ls_final-profl = ls_mara-profl.                       "C----DG Ind Profile
+        DATA(ls_t023t) = VALUE #( lt_t023t[ matkl = ls_mara-matkl ] OPTIONAL ).
+        IF ls_t023t-wgbez IS NOT INITIAL.
+          ls_final-wgbez = ls_t023t-wgbez.                    "C----Material Group Description
+        ENDIF.
+        DATA(ls_makt) = VALUE #( lt_makt[ matnr = ls_mara-matnr ] OPTIONAL ).
+        IF ls_makt-maktx IS NOT INITIAL.
+          ls_final-maktx = ls_makt-maktx.                     "C----Matl Desc
+        ENDIF.
+        DATA(ls_tdg42) = VALUE #( lt_tdg42[ profl = ls_mara-profl ] OPTIONAL ).
+        IF ls_tdg42-profld IS NOT INITIAL.
+          ls_final-profld = ls_tdg42-profld.                  "C----Description
+        ENDIF.
+        DATA(ls_marc) = VALUE #( lt_marc[ matnr = ls_mara-matnr
+                                          werks = ls_lips-werks ] OPTIONAL ).
+        IF ls_marc IS NOT INITIAL.
+          ls_final-ekgrp = ls_marc-ekgrp.                     "C----Purchasing Group
+          ls_final-dispo = ls_marc-dispo.                     "C----MRP Controller
+          DATA(ls_t024) = VALUE #( lt_t024[ ekgrp = ls_marc-ekgrp ] OPTIONAL ).
+          IF ls_t024-eknam IS NOT INITIAL.
+            ls_final-eknam = ls_t024-eknam.                   "C----Description of purchasing group
+          ENDIF.
+          DATA(ls_t024d) = VALUE #( lt_t024d[ werks = ls_lips-werks
+                                              dispo = ls_marc-dispo ] OPTIONAL ).
+          IF ls_t024d-dsnam IS NOT INITIAL.
+            ls_final-dsnam = ls_t024d-dsnam.                  "C----Name of MRP controller
+          ENDIF.
+        ENDIF.
+        APPEND ls_final TO gt_final.
+      ENDIF.
+*C----Clear work area
+      CLEAR: ls_final,
+             ls_mara,
+             ls_makt,
+             ls_tdg42,
+             ls_mvke,
+             ls_tvm4t,
+             ls_marc,
+             ls_t023t,
+             ls_t024,
+             ls_t024d,
+             ls_likp,
+             ls_t001w,
+             ls_tvkot,
+             ls_tvrot,
+             ls_vepo,
+             ls_ztrd_splbl,
+             ls_tvsbt,
+             ls_kna1,
+             ls_del_qty,
+             ls_t005t,
+             ls_lips.
+    ENDLOOP.
+    IF gt_final IS NOT INITIAL.
+      SORT gt_final BY vbeln posnr.
+    ENDIF.
+
+*C----Item numbers with length 6 are removed
+*C----from the final table
+    CLEAR ls_final.
+    LOOP AT gt_final ASSIGNING FIELD-SYMBOL(<fs_final>).
+      SHIFT <fs_final>-posnr LEFT DELETING LEADING c_zero.
+      lv_len = strlen( <fs_final>-posnr ).
+      IF lv_len = 6.
+        CLEAR <fs_final>-posnr.
+      ENDIF.
+    ENDLOOP.
+    IF <fs_final> IS ASSIGNED.
+      UNASSIGN <fs_final>.
+    ENDIF.
+    DELETE gt_final WHERE posnr IS INITIAL.
+
+*C----Clear tables
+    CLEAR: lt_mara,
+           lt_makt,
+           lt_tdg42,
+           lt_mvke,
+           lt_tvm4t,
+           lt_marc,
+           lt_likp,
+           lt_t001w,
+           lt_tvkot,
+           lt_tvrot,
+           lt_vepo,
+           lt_ztrd_splbl,
+           lt_tvsbt,
+           lt_kna1,
+           lt_lips,
+           ls_sales_org,
+           lt_sales_org,
+           lt_temp,
+           ls_land1,
+           lt_land1,
+           lt_kna1_temp,
+           lt_deliv_type,
+           ls_deliv_type,
+           lt_likp_temp,
+           lt_lips_temp,
+           lt_mara_temp,
+           lt_marc_temp,
+           lt_tvstz,
+           ls_ship_point,
+           lt_ship_point,
+           ls_sales_org,
+           lt_sales_org,
+           lt_mvke_temp,
+           lt_vepo_temp,
+           lt_vbak,
+           lt_del_qty,
+           lt_t005t,
+           gt_xref.
+  ENDMETHOD.
+  METHOD alv_output.
+    DATA: lv_key       TYPE salv_s_layout_key,
+          lo_cols      TYPE REF TO cl_salv_columns,
+          lo_column    TYPE REF TO cl_salv_column_table,
+          lo_functions TYPE REF TO cl_salv_functions,
+          lo_ref       TYPE REF TO cx_root.
+
+    IF gt_final IS NOT INITIAL.
+      TRY.
+          cl_salv_table=>factory( IMPORTING r_salv_table = DATA(lo_alv)
+                                   CHANGING t_table      = gt_final ).
+        CATCH cx_salv_msg INTO lo_ref.
+          MESSAGE lo_ref->get_text( ) TYPE if_drf_const=>msg_type_success
+          DISPLAY LIKE if_drf_const=>msg_type_error.
+      ENDTRY.
+      IF lo_alv IS BOUND.
+        TRY.
+            lo_cols = lo_alv->get_columns( ).
+
+            lo_column ?= lo_cols->get_column( columnname = c_matnr ).
+            lo_column->set_short_text( value = text-001 ).  "C----Material
+            lo_column->set_medium_text( value = text-001 ). "C----Material
+            lo_column->set_long_text( value = text-001 ).   "C----Material
+
+            lo_column ?= lo_cols->get_column( columnname = c_maktx ).
+            lo_column->set_short_text( value = text-002 ).  "C----Matl Desc
+            lo_column->set_medium_text( value = text-002 ). "C----Matl Desc
+            lo_column->set_long_text( value = text-002 ).   "C----Matl Desc
+
+            lo_column ?= lo_cols->get_column( columnname = c_profl ).
+            lo_column->set_short_text( value = text-003 ).  "C----DG Ind Pro
+            lo_column->set_medium_text( value = text-004 ). "C----DG Ind Profile
+            lo_column->set_long_text( value = text-004 ).   "C----DG Ind Profile
+
+            lo_column ?= lo_cols->get_column( columnname = c_profld ).
+            lo_column->set_short_text( value = text-005 ).  "C----Desc
+            lo_column->set_medium_text( value = text-006 ). "C----DG ind description
+            lo_column->set_long_text( value = text-044 ).   "C----DG indicator description
+
+            lo_column ?= lo_cols->get_column( columnname = c_werks ).
+            lo_column->set_short_text( value = text-007 ).  "C----Plant
+            lo_column->set_medium_text( value = text-007 ). "C----Plant
+            lo_column->set_long_text( value = text-007 ).   "C----Plant
+
+            lo_column ?= lo_cols->get_column( columnname = c_name1 ).
+            lo_column->set_short_text( value = text-008 ).  "C----Plant Desc
+            lo_column->set_medium_text( value = text-009 ). "C----Plant Description
+            lo_column->set_long_text( value = text-009 ).   "C----Plant Description
+
+            lo_column ?= lo_cols->get_column( columnname = c_vkorg ).
+            lo_column->set_short_text( value = text-010 ).  "C----Sales Org
+            lo_column->set_medium_text( value = text-011 ). "C----Sales Organization
+            lo_column->set_long_text( value = text-011 ).   "C----Sales Organization
+
+            lo_column ?= lo_cols->get_column( columnname = c_vtext ).
+            lo_column->set_short_text( value = text-012 ).  "C----Org Desc
+            lo_column->set_medium_text( value = text-013 ). "C----Org Description
+            lo_column->set_long_text( value = text-014 ).   "C----Organization Description
+
+            lo_column ?= lo_cols->get_column( columnname = c_matkl ).
+            lo_column->set_short_text( value = text-015 ).  "C----Mat Group
+            lo_column->set_medium_text( value = text-016 ). "C----Material Group
+            lo_column->set_long_text( value = text-016 ).   "C----Material Group
+
+            lo_column ?= lo_cols->get_column( columnname = c_wgbez ).
+            lo_column->set_short_text( value = text-052 ).  "C----Mt Grp Dsc
+            lo_column->set_medium_text( value = text-053 ). "C----Material Group Desc
+            lo_column->set_long_text( value = text-053 ).   "C----Material Group Desc
+
+            lo_column ?= lo_cols->get_column( columnname = c_mvgr4 ).
+            lo_column->set_short_text( value = text-017 ).  "C----Mat Grp 4
+            lo_column->set_medium_text( value = text-018 ). "C----Material Group 4
+            lo_column->set_long_text( value = text-018 ).   "C----Material Group 4
+
+            lo_column ?= lo_cols->get_column( columnname = c_bezei ).
+            lo_column->set_short_text( value = text-019 ).  "C----Emp Name
+            lo_column->set_medium_text( value = text-020 ). "C----Employee Name
+            lo_column->set_long_text( value = text-020 ).   "C----Employee Name
+
+            lo_column ?= lo_cols->get_column( columnname = c_ekgrp ).
+            lo_column->set_short_text( value = text-046 ).  "C----Pur Group
+            lo_column->set_medium_text( value = text-047 ). "C----Purchasing Group
+            lo_column->set_long_text( value = text-047 ).   "C----Purchasing Group
+
+            lo_column ?= lo_cols->get_column( columnname = c_eknam ).
+            lo_column->set_short_text( value = text-048 ).  "C----PGR Desc
+            lo_column->set_medium_text( value = text-049 ). "C----Purchasing Grp Desc
+            lo_column->set_long_text( value = text-049 ).   "C----Purchasing Grp Desc
+
+            lo_column ?= lo_cols->get_column( columnname = c_dispo ).
+            lo_column->set_short_text( value = text-021 ).  "C----MRP Ctrl
+            lo_column->set_medium_text( value = text-022 ). "C----MRP Controller
+            lo_column->set_long_text( value = text-022 ).   "C----MRP Controller
+
+            lo_column ?= lo_cols->get_column( columnname = c_dsnam ).
+            lo_column->set_short_text( value = text-050 ).  "C----MRP Name
+            lo_column->set_medium_text( value = text-051 ). "C----MRP Controller Name
+            lo_column->set_long_text( value = text-051 ).   "C----MRP Controller Name
+
+            lo_column ?= lo_cols->get_column( columnname = c_vbeln ).
+            lo_column->set_short_text( value = text-023 ).  "C----Delivery
+            lo_column->set_medium_text( value = text-023 ). "C----Delivery
+            lo_column->set_long_text( value = text-023 ).   "C----Delivery
+
+            lo_column ?= lo_cols->get_column( columnname = c_posnr ).
+            lo_column->set_short_text( value = text-042 ).  "C----Item
+            lo_column->set_medium_text( value = text-042 ). "C----Item
+            lo_column->set_long_text( value = text-042 ).   "C----Item
+
+            lo_column ?= lo_cols->get_column( columnname = c_routbez ).
+            lo_column->set_short_text( value = text-024 ).  "C----Route
+            lo_column->set_medium_text( value = text-025 ). "C----Route Shipped By
+            lo_column->set_long_text( value = text-025 ).   "C----Route Shipped By
+
+            lo_column ?= lo_cols->get_column( columnname = c_carrier ).
+            lo_column->set_short_text( value = text-026 ).  "C----Carrier
+            lo_column->set_medium_text( value = text-026 ). "C----Carrier
+            lo_column->set_long_text( value = text-026 ).   "C----Carrier
+
+            lo_column ?= lo_cols->get_column( columnname = c_vsbed_bez ).
+            lo_column->set_short_text( value = text-027 ).  "C----Ship Cond
+            lo_column->set_medium_text( value = text-028 ). "C----Shipping Conditions
+            lo_column->set_long_text( value = text-028 ).   "C----Shipping Conditions
+
+            lo_column ?= lo_cols->get_column( columnname = c_trackingnumber ).
+            lo_column->set_short_text( value = text-029 ).  "C----Tracking
+            lo_column->set_medium_text( value = text-030 ). "C----Tracking Number(AWB)
+            lo_column->set_long_text( value = text-030 ).   "C----Tracking Number(AWB)
+
+            lo_column ?= lo_cols->get_column( columnname = c_ort01 ).
+            lo_column->set_short_text( value = text-031 ).  "C----Dest City
+            lo_column->set_medium_text( value = text-032 ). "C----Destination City
+            lo_column->set_long_text( value = text-032 ).   "C----Destination City
+
+            lo_column ?= lo_cols->get_column( columnname = c_landx ).
+            lo_column->set_short_text( value = text-033 ).  "C----Dest Ctry
+            lo_column->set_medium_text( value = text-034 ). "C----Destination Country
+            lo_column->set_long_text( value = text-034 ).   "C----Destination Country
+
+            lo_column ?= lo_cols->get_column( columnname = c_lfimg ).
+            lo_column->set_short_text( value = text-035 ).  "C----Del Qty
+            lo_column->set_medium_text( value = text-036 ). "C----Delivery Qty
+            lo_column->set_long_text( value = text-036 ).   "C----Delivery Qty
+
+            lo_column ?= lo_cols->get_column( columnname = c_meins ).
+            lo_column->set_short_text( value = text-037 ).  "C----Base Unit
+            lo_column->set_medium_text( value = text-037 ). "C----Base Unit
+            lo_column->set_long_text( value = text-037 ).   "C----Base Unit
+          CATCH cx_salv_not_found.
+            MESSAGE lo_ref->get_text( ) TYPE if_drf_const=>msg_type_info.
+        ENDTRY.
+        lo_alv->get_columns( )->set_optimize( value = abap_true ).
+        lo_functions = lo_alv->get_functions( ).
+        lo_functions->set_all( abap_true ).
+        lv_key-report = sy-repid.
+        lo_alv->get_layout( )->set_key( lv_key ).
+        lo_alv->get_layout( )->set_save_restriction( lo_alv->get_layout( )->restrict_none ).
+        lo_alv->display( ).
+        CLEAR: lo_alv,
+               lo_ref,
+               lv_key,
+               gt_final.
+      ENDIF.
+    ELSE.
+      MESSAGE text-000 TYPE c_s DISPLAY LIKE c_e. "C----No records to display
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
+****Unique***
