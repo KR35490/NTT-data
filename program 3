@@ -1,0 +1,509 @@
+*&---------------------------------------------------------------------*
+*& Report  ZEHSR_CLASSIFICATION_MATERIAL
+*&---------------------------------------------------------------------*
+* Program Title    : Assigning classification view                     *
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 11-July-2023                                      *
+* RD / WI          : 0111001836 / 4000001459                           *
+* Transport        : BRDK9A3FLV                                        *
+* Transaction code : ZEHSSVTFLG                                        *
+* Description      : To maintain SVT class and Relevant for SVT Flag   *
+*                    for the Material.                                 *
+************************************************************************
+
+REPORT zehsr_classification_material.
+
+*----------------------------------------------------------------------*
+*                        Data declaration
+*----------------------------------------------------------------------*
+INCLUDE zehsu_classification_mat_top.
+
+*----------------------------------------------------------------------*
+*                        Selection screen
+*----------------------------------------------------------------------*
+INCLUDE zehsu_classification_mat_sel.
+
+*----------------------------------------------------------------------*
+*                        Subroutines
+*----------------------------------------------------------------------*
+INCLUDE zehsu_classification_mat_sub.
+
+*----------------------------------------------------------------------*
+*                        Initialization
+*----------------------------------------------------------------------*
+INITIALIZATION.
+  p_create = c_x.
+
+  DATA(go_user) = NEW lcl_zehsr_classification_mat( ).
+
+  IF go_user IS BOUND.
+    CALL METHOD go_user->set_values.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                   AT SELECTION-SCREEN OUTPUT
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+
+  IF go_user IS BOUND.
+    CALL METHOD go_user->disable_p_value.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                   AT SELECTION-SCREEN ON
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN ON p_value.
+
+  IF go_user IS BOUND.
+    CALL METHOD go_user->drop_down_list.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                        Start-of-selection
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  IF go_user IS BOUND.
+    CALL METHOD go_user->validate_input.
+    CALL METHOD go_user->process_data.
+    CALL METHOD go_user->alv_output.
+  ENDIF.
+
+  ***Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_CLASSIFICATION_MAT_TOP
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 11-July-2023                                      *
+* RD / WI          : 0111001836 / 4000001459                           *
+* Transport        : BRDK9A3FLV                                        *
+* Transaction code : ZEHSSVTFLG                                        *
+* Description      : To maintain SVT class and Relevant for SVT Flag   *
+*                    for the Material.                                 *
+*----------------------------------------------------------------------*
+
+TYPES: BEGIN OF ty_final,
+         matnr  TYPE matnr,
+         class  TYPE klasse_d,
+         klart  TYPE klassenart,
+         atnam  TYPE atnam,
+         atwrt  TYPE atwrt,
+         remark TYPE char70,
+       END OF ty_final.
+
+CLASS lcl_zehsr_classification_mat DEFINITION FINAL.
+  PUBLIC SECTION.
+
+    CLASS-METHODS : set_values,
+      drop_down_list,
+      disable_p_value,
+      validate_input,
+      process_data,
+      alv_output.
+
+ENDCLASS.
+
+DATA: gt_final     TYPE STANDARD TABLE OF ty_final,
+      go_alv       TYPE REF TO cl_salv_table,
+      go_cols      TYPE REF TO cl_salv_columns,
+      go_column    TYPE REF TO cl_salv_column_table,
+      go_functions TYPE REF TO cl_salv_functions,
+      gt_list      TYPE vrm_values,
+      gs_list      TYPE vrm_value,
+      gv_value     TYPE atwrt.
+
+CONSTANTS: c_001                  TYPE char3       VALUE '001',                  "Class type
+           c_zsap_ehs_svt         TYPE klasse_d    VALUE 'ZSAP_EHS_SVT',         "Class
+           c_sap_ehs_svt_relevant TYPE char20      VALUE 'SAP_EHS_SVT_RELEVANT', "Characteristic name
+           c_mara                 TYPE tabelle     VALUE 'MARA',
+           c_x                    TYPE char1       VALUE 'X',
+           c_e                    TYPE char1       VALUE 'E',
+           c_s                    TYPE char1       VALUE 'S',
+           c_yes                  TYPE char3       VALUE 'YES', "Characteristic values
+           c_no                   TYPE char2       VALUE 'NO',  "Characteristic values
+           c_1                    TYPE char1       VALUE '1',   "Characteristic values
+           c_0                    TYPE char1       VALUE '0',   "Characteristic values
+           c_2                    TYPE char1       VALUE '2',       "Key
+           c_p_value              TYPE vrm_id      VALUE 'P_VALUE', "Characteristic values
+           c_matnr                TYPE lvc_fname   VALUE 'MATNR',  "Material number
+           c_class                TYPE lvc_fname   VALUE 'CLASS',  "Class
+           c_klart                TYPE lvc_fname   VALUE 'KLART',  "Class type
+           c_atnam                TYPE lvc_fname   VALUE 'ATNAM',  "Characteristic name
+           c_atwrt                TYPE lvc_fname   VALUE 'ATWRT',  "Characteristic value
+           c_remark               TYPE lvc_fname   VALUE 'REMARK', "Remark
+           c_blank                TYPE char1       VALUE ' '.
+    ***Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_CLASSIFICATION_MAT_SEL
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 11-July-2023                                      *
+* RD / WI          : 0111001836 / 4000001459                           *
+* Transport        : BRDK9A3FLV                                        *
+* Transaction code : ZEHSSVTFLG                                        *
+* Description      : To maintain SVT class and Relevant for SVT Flag   *
+*                    for the Material.                                 *
+*----------------------------------------------------------------------*
+
+DATA gv_mara TYPE matnr.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-000.            "Please enter below details
+
+SELECT-OPTIONS s_matnr FOR gv_mara NO INTERVALS.                         "Material number
+
+PARAMETERS: p_create TYPE char1 RADIOBUTTON GROUP r1 USER-COMMAND ucomm, "Create SVT Class
+            p_change TYPE char1 RADIOBUTTON GROUP r1,                    "Change SVT Class
+            p_disp   TYPE char1 RADIOBUTTON GROUP r1,                    "Display SVT Class
+            p_value  TYPE atwrt AS LISTBOX VISIBLE LENGTH 20.            "Characteristic value
+
+SELECTION-SCREEN END OF BLOCK b1.
+      ***Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_CLASSIFICATION_MAT_SUB
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 11-July-2023                                      *
+* RD / WI          : 0111001836 / 4000001459                           *
+* Transport        : BRDK9A3FLV                                        *
+* Transaction code : ZEHSSVTFLG                                        *
+* Description      : To maintain SVT class and Relevant for SVT Flag   *
+*                    for the Material.                                 *
+*----------------------------------------------------------------------*
+
+CLASS lcl_zehsr_classification_mat IMPLEMENTATION.
+  METHOD set_values.
+
+*Drop-down list
+    CLEAR : gs_list,
+            gt_list.
+
+    gs_list-key = c_1.
+    gs_list-text = c_yes.
+    APPEND gs_list TO gt_list.
+    CLEAR gs_list.
+
+    gs_list-key = c_2.
+    gs_list-text = c_no.
+    APPEND gs_list TO gt_list.
+    CLEAR gs_list.
+
+    IF gt_list IS NOT INITIAL.
+      CALL FUNCTION 'VRM_SET_VALUES'
+        EXPORTING
+          id              = c_p_value
+          values          = gt_list
+        EXCEPTIONS
+          id_illegal_name = 1
+          OTHERS          = 2.
+      IF sy-subrc <> 0.
+        MESSAGE text-012 TYPE c_e.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD drop_down_list.
+
+    DATA: ls_values TYPE dynpread,
+          lt_values TYPE TABLE OF dynpread.
+
+    CLEAR: gs_list,
+           ls_values,
+           lt_values,
+           gv_value.
+
+    ls_values-fieldname = c_p_value.
+    APPEND ls_values TO lt_values.
+    CLEAR ls_values.
+    IF lt_values IS NOT INITIAL.
+      CALL FUNCTION 'DYNP_VALUES_READ'
+        EXPORTING
+          dyname               = sy-cprog
+          dynumb               = sy-dynnr
+        TABLES
+          dynpfields           = lt_values
+        EXCEPTIONS
+          invalid_abapworkarea = 1
+          invalid_dynprofield  = 2
+          invalid_dynproname   = 3
+          invalid_dynpronummer = 4
+          invalid_request      = 5
+          no_fielddescription  = 6
+          invalid_parameter    = 7
+          undefind_error       = 8
+          double_conversion    = 9
+          stepl_not_found      = 10
+          OTHERS               = 11.
+      IF sy-subrc = 0.
+        ls_values = lt_values[ 1 ].
+        IF sy-subrc = 0 AND ls_values-fieldvalue IS NOT INITIAL.
+          gs_list = VALUE #( gt_list[ key = ls_values-fieldvalue ] OPTIONAL ).
+          IF sy-subrc = 0 AND gs_list-text IS NOT INITIAL.
+            gv_value = gs_list-text.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    CLEAR: gs_list,
+           ls_values,
+           lt_values.
+
+  ENDMETHOD.
+  METHOD disable_p_value.
+*Characteristic values field should be disabled when Display SVT Class radio button is selected
+    LOOP AT SCREEN.
+      IF p_disp = c_x.
+        IF screen-name = c_p_value.
+          CLEAR p_value.
+          screen-input = c_0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+  METHOD validate_input.
+
+*Validate Material number
+    IF s_matnr[] IS NOT INITIAL.
+      SELECT matnr
+         FROM mara
+         INTO TABLE @DATA(lt_mara)
+        WHERE matnr IN @s_matnr.
+      IF lt_mara[] IS NOT INITIAL.
+        SORT lt_mara BY matnr.
+        LOOP AT s_matnr INTO DATA(ls_mat).
+          IF ls_mat-low IS NOT INITIAL AND NOT line_exists( lt_mara[ matnr = ls_mat-low ] ).
+            DATA(lv_message) = |{ text-001 }| && | | && |{ ls_mat-low }| && | | &&  |{ text-002 }|. "Material "is invalid
+            MESSAGE lv_message TYPE c_s DISPLAY LIKE c_e.
+            CLEAR lv_message.
+            LEAVE LIST-PROCESSING.
+          ENDIF.
+        ENDLOOP.
+      ELSE.
+        lv_message = |{ text-001 }| && | | && |{ s_matnr-low }| && | | &&  |{ text-002 }|. "Material "is invalid
+        MESSAGE lv_message TYPE c_s DISPLAY LIKE c_e.
+        CLEAR lv_message.
+        LEAVE LIST-PROCESSING.
+      ENDIF.
+    ELSE.
+      CLEAR lv_message.
+      lv_message = |{ text-014 }|. "Please enter material number
+      MESSAGE lv_message TYPE c_s DISPLAY LIKE c_e.
+      CLEAR lv_message.
+      LEAVE LIST-PROCESSING.
+    ENDIF.
+
+
+*Validate Characteristic values
+    IF p_value = c_blank AND ( p_create = c_x OR p_change = c_x ).
+      MESSAGE text-013 TYPE c_s DISPLAY LIKE c_e. "Please select YES or NO from the drop-down list
+      LEAVE LIST-PROCESSING.
+    ENDIF.
+
+  ENDMETHOD.
+  METHOD process_data.
+
+    DATA: lt_alloc_num  TYPE tt_bapi1003_alloc_values_num,
+          lt_alloc_char TYPE tt_bapi1003_alloc_values_char,
+          lt_alloc_curr TYPE tt_bapi1003_alloc_values_curr,
+          lt_rettab     TYPE bapirettab,
+          ls_final      TYPE ty_final,
+          lv_matnr      TYPE objnum.
+
+    CLEAR: lt_alloc_num,
+           lt_alloc_char,
+           lt_alloc_curr,
+           lt_rettab,
+           gt_final,
+           ls_final,
+           lv_matnr.
+
+    LOOP AT s_matnr INTO DATA(ls_matnr).
+      lv_matnr = ls_matnr-low.
+
+      p_value = gv_value.
+
+      IF lv_matnr IS NOT INITIAL.
+        CALL FUNCTION 'BAPI_OBJCL_GETDETAIL'
+          EXPORTING
+            objectkey       = lv_matnr
+            objecttable     = c_mara
+            classnum        = c_zsap_ehs_svt
+            classtype       = c_001
+          TABLES
+            allocvaluesnum  = lt_alloc_num
+            allocvalueschar = lt_alloc_char
+            allocvaluescurr = lt_alloc_curr
+            return          = lt_rettab.
+        DATA(ls_alloc_char) = VALUE #( lt_alloc_char[ charact = c_sap_ehs_svt_relevant ] OPTIONAL ).
+        IF ls_alloc_char IS INITIAL AND ( p_change = c_x OR p_disp = c_x ).
+
+          DATA(lv_remark) = |{ text-010 }|. "Classification does not exist for this material. Choose Create option.
+
+        ELSEIF ls_alloc_char IS NOT INITIAL AND ls_alloc_char-value_char <> p_value AND p_change = c_x.
+
+          CLEAR: lt_alloc_char,
+                 lt_rettab.
+
+*For assigning Characterictic name and Characteristic value
+          ls_alloc_char-charact    = c_sap_ehs_svt_relevant.
+          ls_alloc_char-value_char = p_value.
+          CASE p_value.
+            WHEN c_yes.
+              ls_alloc_char-value_neutral = c_1.
+            WHEN c_no.
+              ls_alloc_char-value_neutral = c_0.
+          ENDCASE.
+          APPEND ls_alloc_char TO lt_alloc_char.
+
+          CALL FUNCTION 'BAPI_OBJCL_CHANGE'
+            EXPORTING
+              objectkey          = lv_matnr
+              objecttable        = c_mara
+              classnum           = c_zsap_ehs_svt
+              classtype          = c_001
+            TABLES
+              allocvaluesnumnew  = lt_alloc_num
+              allocvaluescharnew = lt_alloc_char
+              allocvaluescurrnew = lt_alloc_curr
+              return             = lt_rettab.
+          DATA(ls_rettab) = VALUE #( lt_rettab[ type = c_s ] OPTIONAL ).
+          IF ls_rettab-type = c_s.
+            CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+          ELSE.
+            CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+          ENDIF.
+
+        ELSEIF ls_alloc_char IS NOT INITIAL AND p_create = c_x.
+
+          lv_remark = |{ text-011 }|. "Classification already exists for this material. Choose Change option.
+
+        ELSEIF ls_alloc_char IS INITIAL AND p_create = c_x.
+
+*For assigning Characterictic name and Characteristic value
+          ls_alloc_char-charact    = c_sap_ehs_svt_relevant.
+          ls_alloc_char-value_char = p_value.
+          CASE p_value.
+            WHEN c_yes.
+              ls_alloc_char-value_neutral = c_1.
+            WHEN c_no.
+              ls_alloc_char-value_neutral = c_0.
+          ENDCASE.
+          APPEND ls_alloc_char TO lt_alloc_char.
+
+          CALL FUNCTION 'BAPI_OBJCL_CREATE'
+            EXPORTING
+              objectkeynew    = lv_matnr
+              objecttablenew  = c_mara
+              classnumnew     = c_zsap_ehs_svt
+              classtypenew    = c_001
+            TABLES
+              allocvaluesnum  = lt_alloc_num
+              allocvalueschar = lt_alloc_char
+              allocvaluescurr = lt_alloc_curr
+              return          = lt_rettab.
+          ls_rettab = VALUE #( lt_rettab[ type = c_s ] OPTIONAL ).
+          IF ls_rettab-type = c_s.
+            CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+          ELSE.
+            CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+          ENDIF.
+        ENDIF.
+
+*Populating final internal table
+        ls_final-matnr  = lv_matnr.
+        ls_final-class  = c_zsap_ehs_svt.
+        ls_final-klart  = c_001.
+        ls_final-atnam  = ls_alloc_char-charact.
+        IF p_disp = c_x.
+          ls_final-atwrt  = ls_alloc_char-value_char.
+        ELSEIF p_create = c_x OR p_change = c_x.
+          ls_final-atwrt  = p_value.
+        ENDIF.
+        IF lv_remark IS NOT INITIAL.
+          CLEAR: ls_final-class,
+                 ls_final-klart,
+                 ls_final-atnam,
+                 ls_final-atwrt.
+          ls_final-remark = lv_remark.
+        ENDIF.
+        APPEND ls_final TO gt_final.
+        CLEAR: ls_final,
+               lt_alloc_num,
+               lt_alloc_char,
+               ls_alloc_char,
+               lt_alloc_curr,
+               lt_rettab,
+               ls_matnr,
+               lv_matnr,
+               lv_remark.
+
+      ENDIF.
+    ENDLOOP.
+
+    CLEAR gv_value.
+
+  ENDMETHOD.
+  METHOD alv_output.
+
+    DATA: lv_col_err TYPE REF TO cx_salv_msg,
+          lv_error   TYPE string.
+
+    IF gt_final[] IS NOT INITIAL.
+
+      TRY.
+          cl_salv_table=>factory(
+          EXPORTING
+            list_display  = if_salv_c_bool_sap=>false
+          IMPORTING
+             r_salv_table = go_alv
+          CHANGING
+             t_table      = gt_final ).
+        CATCH cx_salv_msg INTO lv_col_err.
+          lv_error = lv_col_err->get_text( ).
+          MESSAGE lv_error TYPE c_e.
+          CLEAR lv_error.
+      ENDTRY.
+      TRY.
+          go_cols = go_alv->get_columns( ).
+
+          go_column ?= go_cols->get_column( columnname = c_matnr ).
+          go_column->set_long_text( value = text-003 ). "MATERIAL
+
+          go_column ?= go_cols->get_column( columnname = c_class ).
+          go_column->set_long_text( value = text-004 ). "CLASS
+
+          go_column ?= go_cols->get_column( columnname = c_klart ).
+          go_column->set_long_text( value = text-005 ). "CLASS TYPE
+
+          go_column ?= go_cols->get_column( columnname = c_atnam ).
+          go_column->set_long_text( value = text-006 ). "CHARACTERISTIC NAME
+
+          go_column ?= go_cols->get_column( columnname = c_atwrt ).
+          go_column->set_long_text( value = text-007 ). "CHARACTERISTIC VALUE
+
+          go_column ?= go_cols->get_column( columnname = c_remark ).
+          go_column->set_short_text( value = text-008 ). "REMARK
+          go_column->set_medium_text( value = text-008 ). "REMARK
+          go_column->set_long_text( value = text-008 ). "REMARK
+
+          go_alv->get_columns( )->set_optimize( value = abap_true ).
+          go_functions = go_alv->get_functions( ).
+          go_functions->set_all( abap_true ).
+          go_alv->display( ).
+        CATCH cx_salv_not_found.
+          CLEAR gt_final.
+      ENDTRY.
+
+    ELSE.
+      MESSAGE text-009 TYPE c_s DISPLAY LIKE c_e. "No records to display
+    ENDIF.
+
+  ENDMETHOD.
+ENDCLASS.
+
+        ***Unique***
