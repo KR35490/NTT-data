@@ -1,0 +1,221 @@
+*************************************************************************
+* Program ID     : zehsr_mail_with_uaerohs                              *
+* Program Title  : Email Sending for Created Specification  for uae rohs*
+* Created By     : H335026                                              *
+* Creation Date  : 20-JUNE-2022                                         *
+* RI/WI          : 0111000367/4000000387                                *
+* Transaction    : BRDK9A31O1                                           *
+* Description    : Email Sending for Created Specification  for uae rohs*
+*************************************************************************
+
+REPORT ZEHSR_MAIL_WITH_UAEROHS.
+
+*--------------------DATA DECLARATION --------------*
+INCLUDE zehsu_mail_with_uaerohs_top.
+*--------------------TO  GET DATA ------------------*
+INCLUDE zehsr_mail_with_uaerohs_PERFOR.
+
+START-OF-SELECTION.
+
+  PERFORM send_mail_uaerohs.
+
+
+***Unique***
+*&-----------------------------------------------------------------------------------*
+*&  Include           ZEHSU_MAIL_WITH_UAEROHS_TOP
+*&-----------------------------------------------------------------------------------*
+
+TYPES  : BEGIN OF ty_attachment,
+           zcirno   TYPE zcirno,
+           zmatno   TYPE matnr,
+           zattrb4  TYPE zattrb4,
+           zdelflag TYPE zdelflag,
+         END OF ty_attachment.
+
+TYPES:   BEGIN OF ty_makt,
+           matnr TYPE makt-matnr,
+           maktx TYPE makt-maktx,
+         END OF ty_makt .
+
+CONSTANTS :     c_203   TYPE zcompkey       VALUE '203',
+                c_112   TYPE zcompkey       VALUE '112',  "ROHS Product
+                c_115   TYPE zcompkey       VALUE '115',  "UAE ROHS PRODUCT
+                c_yes   TYPE zattrb3        VALUE 'Yes',
+                c_x     TYPE char1          VALUE 'X',
+                c_xls   TYPE soodk-objtp    VALUE 'XLS',
+                c_txt   TYPE so_obj_tp      VALUE 'TXT',
+                c_i     TYPE char1          VALUE 'I',         "Information.
+                c_base  TYPE char9          VALUE  '=BASE("',
+                c_qt    TYPE char8          VALUE  '",10,12)',
+                c_space TYPE char1          VALUE space.
+***Unique***
+*----------------------------------------------------------------------*
+***INCLUDE ZEHSR_MAIL_WITH_UAEROHS_PERFOR.
+*----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  SEND_MAIL_UAEROHS
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM send_mail_uaerohs .
+*prepare mail object
+  DATA :  lo_send_request TYPE REF TO cl_bcs VALUE IS INITIAL,
+          lo_document     TYPE REF TO cl_document_bcs VALUE IS INITIAL,
+          lt_text         TYPE bcsy_text,
+          ls_text         TYPE soli,
+          lo_sender       TYPE REF TO if_sender_bcs VALUE IS INITIAL,
+          lo_recipient    TYPE REF TO if_recipient_bcs VALUE IS INITIAL.
+  CLASS   cl_bcs DEFINITION LOAD.
+
+***Attachment data
+  DATA : lt_z_cir_mpn_val  TYPE TABLE OF  ty_attachment,
+         ls_z_cir_mpn_val  TYPE           ty_attachment,
+         lt_makt           TYPE TABLE OF  ty_makt,
+         ls_makt           TYPE           ty_makt,
+         lv_string         TYPE string,
+         lv_data_string    TYPE string,
+         lv_xstring        TYPE xstring,
+         lv_store          TYPE char50,          "Leading zeros.
+         lt_binary_content TYPE solix_tab,
+         lv_attsubject     TYPE sood-objdes,
+         lo_bcs_exception  TYPE REF TO cx_bcs.
+
+
+  ls_text-line = text-510.
+  APPEND ls_text TO lt_text.
+  CLEAR ls_text.
+  ls_text-line = text-511.
+  APPEND ls_text TO lt_text.
+  CLEAR ls_text.
+*-------------------------------------------
+***Set attachment
+  SELECT zcirno
+         zmatno
+         zattrb4
+         zdelflag
+  FROM   ztmm_cir_mpn_val
+  INTO  TABLE  lt_z_cir_mpn_val
+  WHERE zcompkey IN ( c_115 )
+  AND   zattrb3  IN ( c_yes,c_x )
+  AND   zcrtndt  = sy-datum.
+
+  IF sy-subrc = 0.
+    SORT lt_z_cir_mpn_val BY zdelflag ASCENDING.
+    DELETE lt_z_cir_mpn_val[] WHERE zdelflag = c_x.
+  ENDIF.
+  SORT lt_z_cir_mpn_val BY zmatno.
+  IF  lt_z_cir_mpn_val[] IS NOT INITIAL.
+    SELECT matnr
+           maktx FROM makt
+      INTO TABLE lt_makt
+      FOR ALL ENTRIES IN lt_z_cir_mpn_val
+      WHERE  matnr = lt_z_cir_mpn_val-zmatno
+      AND    spras = sy-langu.
+    IF  sy-subrc = 0.
+      SORT lt_makt BY matnr ASCENDING .
+    ENDIF.
+
+  ENDIF.
+
+  LOOP AT lt_z_cir_mpn_val INTO ls_z_cir_mpn_val .
+    IF  sy-tabix = 1.
+      CONCATENATE  text-512 text-513 text-514 INTO lv_string SEPARATED BY cl_abap_char_utilities=>horizontal_tab.
+      CONCATENATE lv_data_string lv_string INTO lv_data_string SEPARATED BY cl_abap_char_utilities=>newline.
+    ENDIF.
+    CLEAR:ls_makt.
+    READ TABLE lt_makt INTO ls_makt WITH  KEY matnr = ls_z_cir_mpn_val-zmatno BINARY SEARCH.
+    IF  sy-subrc = 0.
+      IF ls_z_cir_mpn_val-zattrb4 IS NOT INITIAL.
+        CONCATENATE c_base c_space ls_z_cir_mpn_val-zattrb4 c_space c_qt INTO lv_store.
+        CONCATENATE lv_store
+                    ls_z_cir_mpn_val-zmatno
+                    ls_makt-maktx INTO lv_string
+                    SEPARATED BY cl_abap_char_utilities=>horizontal_tab.
+        CONCATENATE lv_data_string lv_string INTO lv_data_string
+                    SEPARATED BY cl_abap_char_utilities=>newline.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+**Convert string to xstring
+  IF lv_data_string IS NOT INITIAL.
+
+    CALL FUNCTION 'HR_KR_STRING_TO_XSTRING'
+      EXPORTING
+        unicode_string   = lv_data_string
+      IMPORTING
+        xstring_stream   = lv_xstring
+      EXCEPTIONS
+        invalid_codepage = 1
+        invalid_string   = 2
+        OTHERS           = 3.
+    IF sy-subrc <> 0.
+      CLEAR :lv_xstring.
+    ENDIF.
+  ENDIF.
+***Xstring to binary
+  IF  lv_xstring IS NOT INITIAL.
+    CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+      EXPORTING
+        buffer     = lv_xstring
+      TABLES
+        binary_tab = lt_binary_content.
+  ENDIF.
+**---------------------add attachment
+  CLEAR lv_attsubject .
+  CONCATENATE text-515 sy-datum INTO lv_attsubject.
+* Create Attachment
+  TRY.
+      lo_send_request = cl_bcs=>create_persistent( ).
+
+      lo_document = cl_document_bcs=>create_document( "create document
+  i_type = c_txt
+  i_text =  lt_text
+  i_subject = text-516 ).
+* Pass the document to send request
+      lo_send_request->set_document( lo_document ).
+
+
+
+      lo_document->add_attachment( EXPORTING
+                                      i_attachment_type = c_xls
+                                      i_attachment_subject = lv_attsubject
+                                      i_att_content_hex = lt_binary_content  ).
+
+
+      lo_sender = cl_sapuser_bcs=>create( sy-uname ). "sender is the logged in user
+* Set sender to send request
+      lo_send_request->set_sender(
+      EXPORTING
+      i_sender = lo_sender ).
+
+**Set recipient
+      lo_recipient = cl_cam_address_bcs=>create_internet_address( text-517 ).
+
+      lo_send_request->add_recipient(
+          EXPORTING
+          i_recipient = lo_recipient
+          i_express = c_x ).
+
+      CALL METHOD lo_send_request->set_send_immediately
+        EXPORTING
+          i_send_immediately = c_x. "here selection screen input p_send
+
+** Send email
+      lo_send_request->send(
+      EXPORTING
+      i_with_error_screen = c_x ).
+      COMMIT WORK.
+
+    CATCH cx_bcs INTO lo_bcs_exception.
+      DATA(lv_string1) = lo_bcs_exception->get_text( ).
+      MESSAGE lv_string1 TYPE c_i.
+      CLEAR lv_string1.
+  ENDTRY.
+ENDFORM.
+***Unique***
+
+***Unique***
