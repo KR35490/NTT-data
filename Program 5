@@ -1,0 +1,1439 @@
+*&---------------------------------------------------------------------*
+*& Report ZEHSR_DG_COMPLIANCE_READINESS
+*&---------------------------------------------------------------------*
+* Program Title    : Report for Plant related DG CR check for Sites    *
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 05-May-2025                                       *
+* RD / WI          : 0111003542 / 4000002882                           *
+* Transport        : BRDK9A3XIS                                        *
+* Transaction code : ZEHS005                                           *
+* Description      : To maintain table ZEHST_DG_CR                     *
+*&---------------------------------------------------------------------*
+REPORT zehsr_dg_compliance_readiness.
+
+*----------------------------------------------------------------------*
+*                        Data declaration
+*----------------------------------------------------------------------*
+INCLUDE zehsu_dg_cr_top.
+
+*----------------------------------------------------------------------*
+*                        Selection screen
+*----------------------------------------------------------------------*
+INCLUDE zehsu_dg_cr_sel.
+
+*----------------------------------------------------------------------*
+*                        Subroutines
+*----------------------------------------------------------------------*
+INCLUDE zehsu_dg_cr_sub.
+
+*----------------------------------------------------------------------*
+*                        Process Before Output
+*----------------------------------------------------------------------*
+INCLUDE zehsu_dg_cr_pbo.
+
+*----------------------------------------------------------------------*
+*                        Process After Input
+*----------------------------------------------------------------------*
+INCLUDE zehsu_dg_cr_pai.
+
+*----------------------------------------------------------------------*
+*                        Initialization
+*----------------------------------------------------------------------*
+INITIALIZATION.
+  p_upld = abap_true.
+
+  IF go_user IS NOT BOUND.
+    go_user = NEW lcl_update( ).
+  ENDIF.
+
+  lcl_update=>load_buttons( ).
+
+*----------------------------------------------------------------------*
+*                        At selection-screen output
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN OUTPUT.
+  IF go_user IS BOUND.
+    go_user->hide_flds( ).
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                        At selection-screen on value-request for
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  lcl_update=>file_pop_up( ).
+
+*----------------------------------------------------------------------*
+*                        At selection screen
+*----------------------------------------------------------------------*
+AT SELECTION-SCREEN.
+  IF go_user IS BOUND.
+    go_user->user_action( ).
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                        Start-of-selection
+*----------------------------------------------------------------------*
+START-OF-SELECTION.
+  IF go_user IS BOUND.
+    IF p_upld = abap_true.
+      go_user->upld( ).
+    ELSE.
+      go_user->validate_plant( ).
+      go_user->disp( ).
+    ENDIF.
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*                        End-of-selection
+*----------------------------------------------------------------------*
+END-OF-SELECTION.
+  IF go_user IS BOUND.
+    go_user->output_error_in_upload( ).
+  ENDIF.
+
+
+****Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_DG_CR_TOP
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 05-May-2025                                       *
+* RD / WI          : 0111003542 / 4000002882                           *
+* Transport        : BRDK9A3XIS                                        *
+* Transaction code : ZEHS005                                           *
+* Description      : To maintain table ZEHST_DG_CR                     *
+*&---------------------------------------------------------------------*
+*C-->Buttons on selection screen
+TABLES sscrfields.
+
+*C-->Type declaration
+TYPES: BEGIN OF ty_zehst_dg_cr_alv,
+         message TYPE bapi_msg,        "C-->Message
+         type    TYPE bapi_mtype,      "C-->Message Type
+         werks   TYPE string,          "C-->Plant
+         name1   TYPE string,          "C-->Plant description
+         land1   TYPE string,          "C-->Country
+         landx   TYPE string,          "C-->Country description
+         regio   TYPE string,          "C-->Region
+         bezei   TYPE string,          "C-->Region description
+         profl   TYPE string,          "C-->DG profile indicator
+         profld  TYPE string,          "C-->DG profile indicator description
+         lgscnt  TYPE string,          "C-->Logistics Site contacts
+         hsecnt  TYPE string,          "C-->HSE Site contact
+         mot     TYPE string,          "C-->ModeTransCat
+         motd    TYPE string,          "C-->DescModTransCat
+       END OF ty_zehst_dg_cr_alv,
+
+       BEGIN OF ty_plant,
+         werks TYPE werks_d,           "C-->Plant
+       END OF ty_plant,
+
+       BEGIN OF ty_profile,
+         profl TYPE zde_dg_ind_pro,    "C-->DG Indicator Profile
+       END OF ty_profile,
+
+       BEGIN OF ty_excel_data,
+         werks  TYPE string,
+         profl  TYPE string,
+         lgscnt TYPE string,
+         hsecnt TYPE string,
+         mot    TYPE string,
+       END OF ty_excel_data,
+
+       tt_excel_data TYPE STANDARD TABLE OF ty_excel_data
+WITH DEFAULT KEY.
+
+*----------------------------------------------------------------------*
+*       CLASS LCL_UPDATE DEFINITION                                    *
+*----------------------------------------------------------------------*
+CLASS lcl_update DEFINITION FINAL.
+  PUBLIC SECTION.
+
+    CLASS-METHODS: file_pop_up,
+      load_buttons.
+
+    METHODS: upld,
+      validate_plant,
+      disp,
+      save_to_db,
+      validate_profl,
+      validate_werks,
+      validate_mot,
+      hide_flds,
+      user_action,
+      check_file_err,
+      upload_success,
+      output_error_in_upload,
+      call_alv_error_in_excl_upload,
+      pop_fcat          IMPORTING mi_reptext   TYPE reptext
+                                  mi_colpos    TYPE lvc_colpos
+                                  mi_fname     TYPE lvc_fname
+                                  mi_outlen    TYPE lvc_outlen
+                                  mi_no_out    TYPE char01 OPTIONAL
+                        CHANGING  mc_tfieldcat TYPE lvc_t_fcat,
+      call_set_table    IMPORTING mi_layout   TYPE lvc_s_layo
+                        CHANGING  mc_outtab   TYPE STANDARD TABLE
+                                  mc_fieldcat TYPE lvc_t_fcat,
+      populate_fieldcat            RETURNING VALUE(mr_tfieldcat) TYPE lvc_t_fcat,
+      append_excl_data_to_int_tab  IMPORTING mi_exceldata TYPE tt_excel_data.
+ENDCLASS.                    "LCL_prodaffect_UPDATE DEFINITION
+
+*C-->Data declaration
+DATA: gt_zehst_dg_cr_alv TYPE TABLE OF ty_zehst_dg_cr_alv,
+      gt_zehst_dg_cr     TYPE TABLE OF zehst_dg_cr,
+      gt_dd07v           TYPE STANDARD TABLE OF dd07v,
+      gt_file            TYPE filetable,
+      go_user            TYPE REF TO lcl_update,
+      go_alv             TYPE REF TO cl_gui_alv_grid,
+      gv_werks           TYPE werks_d,
+      gv_dd07v_count     TYPE i,
+      gv_first           TYPE char10,
+      gv_last            TYPE char10.
+
+*C-->Constant declaration
+CONSTANTS: c_icon_del           TYPE icon_d            VALUE '@11@',
+           c_icon_display       TYPE icon_d            VALUE '@10@',
+           c_zd_hmd_mot         TYPE ddobjname         VALUE 'ZD_HMD_MOT',
+           c_s                  TYPE symsgty           VALUE 'S',
+           c_e                  TYPE symsgty           VALUE 'E',
+           c_enqmode            TYPE enqmode           VALUE 'E',
+           c_dot                TYPE /bdl/_stat        VALUE '.',
+           c_fc01               TYPE syucomm           VALUE 'FC01',
+           c_fc02               TYPE syucomm           VALUE 'FC02',
+           c_onli               TYPE syucomm           VALUE 'ONLI',
+           c_fc10               TYPE lvc_outlen        VALUE '10',
+           c_fc15               TYPE lvc_outlen        VALUE '15',
+           c_title              TYPE gui_title         VALUE '0100',
+           c_message            TYPE lvc_fname         VALUE 'MESSAGE',
+           c_werks              TYPE lvc_fname         VALUE 'WERKS',
+           c_name1              TYPE lvc_fname         VALUE 'NAME1',
+           c_land1              TYPE lvc_fname         VALUE 'LAND1',
+           c_landx              TYPE lvc_fname         VALUE 'LANDX',
+           c_regio              TYPE lvc_fname         VALUE 'REGIO',
+           c_bezei              TYPE lvc_fname         VALUE 'BEZEI',
+           c_profl              TYPE lvc_fname         VALUE 'PROFL',
+           c_profld             TYPE lvc_fname         VALUE 'PROFLD',
+           c_lgscnt             TYPE lvc_fname         VALUE 'LGSCNT',
+           c_hsecnt             TYPE lvc_fname         VALUE 'HSECNT',
+           c_mot                TYPE lvc_fname         VALUE 'MOT',
+           c_motd               TYPE lvc_fname         VALUE 'MOTD',
+           c_output             TYPE gui_status        VALUE 'OUTPUT',
+           c_tabname            TYPE tabname           VALUE 'ZEHST_DG_CR',
+           c_zehst_dg_cr        TYPE tabname           VALUE 'ZEHST_DG_CR',
+           c_gt_zehst_dg_cr_alv TYPE lvc_tname         VALUE 'GT_ZEHST_DG_CR_ALV',
+           c_back               TYPE syucomm           VALUE 'BACK',
+           c_exit               TYPE syucomm           VALUE 'EXIT',
+           c_cancel             TYPE syucomm           VALUE 'CANCEL',
+           c_xlsx               TYPE /isdfps/guistatus VALUE 'XLSX',
+           c_mass               TYPE char3             VALUE 'MAS',
+           c_disp               TYPE char3             VALUE 'DIS',
+           c_num                TYPE num10             VALUE '0123456789',
+           c_bin                TYPE char10            VALUE 'BIN',
+           c_00                 TYPE num2              VALUE '00',
+           c_and                TYPE char3             VALUE 'and',
+           c_fc1_int            TYPE lvc_colpos        VALUE  1,
+           c_11                 TYPE i                 VALUE  11,
+           c_12                 TYPE i                 VALUE  12,
+           c_13                 TYPE i                 VALUE  13,
+           c_14                 TYPE i                 VALUE  14,
+           c_15                 TYPE i                 VALUE  15.
+****Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_DG_CR_TOP
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 05-May-2025                                       *
+* RD / WI          : 0111003542 / 4000002882                           *
+* Transport        : BRDK9A3XIS                                        *
+* Transaction code : ZEHS005                                           *
+* Description      : To maintain table ZEHST_DG_CR                     *
+*&---------------------------------------------------------------------*
+*C-->Buttons on selection screen
+TABLES sscrfields.
+
+*C-->Type declaration
+TYPES: BEGIN OF ty_zehst_dg_cr_alv,
+         message TYPE bapi_msg,        "C-->Message
+         type    TYPE bapi_mtype,      "C-->Message Type
+         werks   TYPE string,          "C-->Plant
+         name1   TYPE string,          "C-->Plant description
+         land1   TYPE string,          "C-->Country
+         landx   TYPE string,          "C-->Country description
+         regio   TYPE string,          "C-->Region
+         bezei   TYPE string,          "C-->Region description
+         profl   TYPE string,          "C-->DG profile indicator
+         profld  TYPE string,          "C-->DG profile indicator description
+         lgscnt  TYPE string,          "C-->Logistics Site contacts
+         hsecnt  TYPE string,          "C-->HSE Site contact
+         mot     TYPE string,          "C-->ModeTransCat
+         motd    TYPE string,          "C-->DescModTransCat
+       END OF ty_zehst_dg_cr_alv,
+
+       BEGIN OF ty_plant,
+         werks TYPE werks_d,           "C-->Plant
+       END OF ty_plant,
+
+       BEGIN OF ty_profile,
+         profl TYPE zde_dg_ind_pro,    "C-->DG Indicator Profile
+       END OF ty_profile,
+
+       BEGIN OF ty_excel_data,
+         werks  TYPE string,
+         profl  TYPE string,
+         lgscnt TYPE string,
+         hsecnt TYPE string,
+         mot    TYPE string,
+       END OF ty_excel_data,
+
+       tt_excel_data TYPE STANDARD TABLE OF ty_excel_data
+WITH DEFAULT KEY.
+
+*----------------------------------------------------------------------*
+*       CLASS LCL_UPDATE DEFINITION                                    *
+*----------------------------------------------------------------------*
+CLASS lcl_update DEFINITION FINAL.
+  PUBLIC SECTION.
+
+    CLASS-METHODS: file_pop_up,
+      load_buttons.
+
+    METHODS: upld,
+      validate_plant,
+      disp,
+      save_to_db,
+      validate_profl,
+      validate_werks,
+      validate_mot,
+      hide_flds,
+      user_action,
+      check_file_err,
+      upload_success,
+      output_error_in_upload,
+      call_alv_error_in_excl_upload,
+      pop_fcat          IMPORTING mi_reptext   TYPE reptext
+                                  mi_colpos    TYPE lvc_colpos
+                                  mi_fname     TYPE lvc_fname
+                                  mi_outlen    TYPE lvc_outlen
+                                  mi_no_out    TYPE char01 OPTIONAL
+                        CHANGING  mc_tfieldcat TYPE lvc_t_fcat,
+      call_set_table    IMPORTING mi_layout   TYPE lvc_s_layo
+                        CHANGING  mc_outtab   TYPE STANDARD TABLE
+                                  mc_fieldcat TYPE lvc_t_fcat,
+      populate_fieldcat            RETURNING VALUE(mr_tfieldcat) TYPE lvc_t_fcat,
+      append_excl_data_to_int_tab  IMPORTING mi_exceldata TYPE tt_excel_data.
+ENDCLASS.                    "LCL_prodaffect_UPDATE DEFINITION
+
+*C-->Data declaration
+DATA: gt_zehst_dg_cr_alv TYPE TABLE OF ty_zehst_dg_cr_alv,
+      gt_zehst_dg_cr     TYPE TABLE OF zehst_dg_cr,
+      gt_dd07v           TYPE STANDARD TABLE OF dd07v,
+      gt_file            TYPE filetable,
+      go_user            TYPE REF TO lcl_update,
+      go_alv             TYPE REF TO cl_gui_alv_grid,
+      gv_werks           TYPE werks_d,
+      gv_dd07v_count     TYPE i,
+      gv_first           TYPE char10,
+      gv_last            TYPE char10.
+
+*C-->Constant declaration
+CONSTANTS: c_icon_del           TYPE icon_d            VALUE '@11@',
+           c_icon_display       TYPE icon_d            VALUE '@10@',
+           c_zd_hmd_mot         TYPE ddobjname         VALUE 'ZD_HMD_MOT',
+           c_s                  TYPE symsgty           VALUE 'S',
+           c_e                  TYPE symsgty           VALUE 'E',
+           c_enqmode            TYPE enqmode           VALUE 'E',
+           c_dot                TYPE /bdl/_stat        VALUE '.',
+           c_fc01               TYPE syucomm           VALUE 'FC01',
+           c_fc02               TYPE syucomm           VALUE 'FC02',
+           c_onli               TYPE syucomm           VALUE 'ONLI',
+           c_fc10               TYPE lvc_outlen        VALUE '10',
+           c_fc15               TYPE lvc_outlen        VALUE '15',
+           c_title              TYPE gui_title         VALUE '0100',
+           c_message            TYPE lvc_fname         VALUE 'MESSAGE',
+           c_werks              TYPE lvc_fname         VALUE 'WERKS',
+           c_name1              TYPE lvc_fname         VALUE 'NAME1',
+           c_land1              TYPE lvc_fname         VALUE 'LAND1',
+           c_landx              TYPE lvc_fname         VALUE 'LANDX',
+           c_regio              TYPE lvc_fname         VALUE 'REGIO',
+           c_bezei              TYPE lvc_fname         VALUE 'BEZEI',
+           c_profl              TYPE lvc_fname         VALUE 'PROFL',
+           c_profld             TYPE lvc_fname         VALUE 'PROFLD',
+           c_lgscnt             TYPE lvc_fname         VALUE 'LGSCNT',
+           c_hsecnt             TYPE lvc_fname         VALUE 'HSECNT',
+           c_mot                TYPE lvc_fname         VALUE 'MOT',
+           c_motd               TYPE lvc_fname         VALUE 'MOTD',
+           c_output             TYPE gui_status        VALUE 'OUTPUT',
+           c_tabname            TYPE tabname           VALUE 'ZEHST_DG_CR',
+           c_zehst_dg_cr        TYPE tabname           VALUE 'ZEHST_DG_CR',
+           c_gt_zehst_dg_cr_alv TYPE lvc_tname         VALUE 'GT_ZEHST_DG_CR_ALV',
+           c_back               TYPE syucomm           VALUE 'BACK',
+           c_exit               TYPE syucomm           VALUE 'EXIT',
+           c_cancel             TYPE syucomm           VALUE 'CANCEL',
+           c_xlsx               TYPE /isdfps/guistatus VALUE 'XLSX',
+           c_mass               TYPE char3             VALUE 'MAS',
+           c_disp               TYPE char3             VALUE 'DIS',
+           c_num                TYPE num10             VALUE '0123456789',
+           c_bin                TYPE char10            VALUE 'BIN',
+           c_00                 TYPE num2              VALUE '00',
+           c_and                TYPE char3             VALUE 'and',
+           c_fc1_int            TYPE lvc_colpos        VALUE  1,
+           c_11                 TYPE i                 VALUE  11,
+           c_12                 TYPE i                 VALUE  12,
+           c_13                 TYPE i                 VALUE  13,
+           c_14                 TYPE i                 VALUE  14,
+           c_15                 TYPE i                 VALUE  15.
+****Unique***
+*&---------------------------------------------------------------------*
+*&  Include           ZEHSU_DG_CR_SUB
+*&---------------------------------------------------------------------*
+* Author           : K Sneha Reddy                                     *
+* HID              : H335026                                           *
+* Creation Date    : 05-May-2025                                       *
+* RD / WI          : 0111003542 / 4000002882                           *
+* Transport        : BRDK9A3XIS                                        *
+* Transaction code : ZEHS005                                           *
+* Description      : To maintain table ZEHST_DG_CR                     *
+*&---------------------------------------------------------------------*
+
+*----------------------------------------------------------------------*
+*       CLASS LCL_UPDATE IMPLEMENTATION
+*----------------------------------------------------------------------*
+CLASS lcl_update IMPLEMENTATION.
+  METHOD load_buttons.
+    DATA ls_dyntxt TYPE smp_dyntxt.
+
+    CLEAR ls_dyntxt.
+    ls_dyntxt-icon_id     = c_icon_display.
+*C-->Maintain Records
+    ls_dyntxt-quickinfo   = |{ text-003 }|.
+    ls_dyntxt-icon_text   = |{ text-003 }|.
+    sscrfields-functxt_01 = ls_dyntxt.
+    CLEAR ls_dyntxt.
+*C-->Delete Selection
+    ls_dyntxt-quickinfo   =  |{ text-009 }|.
+    ls_dyntxt-icon_text   =  |{ text-009 }|.
+    ls_dyntxt-icon_id     = c_icon_del.
+    sscrfields-functxt_02 = ls_dyntxt.
+    CLEAR ls_dyntxt.
+
+  ENDMETHOD.                    "load_buttons
+
+  METHOD hide_flds.
+    LOOP AT SCREEN.
+      IF p_upld = abap_true AND
+        screen-group1 = c_disp.
+        screen-active = 0.
+        MODIFY SCREEN.
+        CLEAR s_werks[].
+      ELSEIF p_disp = abap_true AND
+        screen-group1 = c_mass.
+        screen-active = 0.
+        MODIFY SCREEN.
+        CLEAR p_file.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.                    "hide_flds
+
+  METHOD user_action.
+    CASE sy-ucomm.
+*C-->If execute button is clicked
+      WHEN c_onli.
+        IF p_upld = abap_true.
+          IF p_file IS INITIAL.
+*C-->File path should not be empty
+            MESSAGE e002(zehscl_spec_create).
+          ELSE.
+            SPLIT p_file AT c_dot INTO DATA(lv_path)
+                                       DATA(lv_extension).
+            IF lv_path IS NOT INITIAL AND
+               lv_extension IS NOT INITIAL.
+              lv_extension = to_upper( lv_extension ).
+              IF lv_extension <> c_xlsx.
+*C-->Please upload filetype of xlsx
+                MESSAGE e003(zehscl_spec_create).
+              ENDIF.
+            ENDIF.
+            CLEAR: lv_path,
+                   lv_extension,
+                   p_file.
+          ENDIF.
+        ELSE.
+          IF s_werks[] IS INITIAL.
+*C-->Please enter Plant
+            MESSAGE e009(zehscl_spec_create).
+          ENDIF.
+        ENDIF.
+*C-->If "Maintain Records" button  is clicked
+      WHEN c_fc01.
+        CALL FUNCTION 'VIEW_MAINTENANCE_CALL'
+          EXPORTING
+            action                       = c_s
+            view_name                    = c_zehst_dg_cr
+          EXCEPTIONS
+            client_reference             = 1
+            foreign_lock                 = 2
+            invalid_action               = 3
+            no_clientindependent_auth    = 4
+            no_database_function         = 5
+            no_editor_function           = 6
+            no_show_auth                 = 7
+            no_tvdir_entry               = 8
+            no_upd_auth                  = 9
+            only_show_allowed            = 10
+            system_failure               = c_11
+            unknown_field_in_dba_sellist = c_12
+            view_not_found               = c_13
+            maintenance_prohibited       = c_14
+            OTHERS                       = c_15.
+        IF sy-subrc <> 0.
+          MESSAGE ID sy-msgid
+          TYPE sy-msgty
+          NUMBER sy-msgno
+          WITH sy-msgv1
+               sy-msgv2
+               sy-msgv3
+               sy-msgv4.
+        ENDIF.
+*C-->If "Delete Selection" button is clicked
+      WHEN c_fc02.
+        IF p_upld = abap_true.
+          SET CURSOR FIELD p_file.
+          CLEAR p_file.
+        ELSE.
+          SET CURSOR FIELD s_werks.
+          CLEAR s_werks[].
+        ENDIF.
+    ENDCASE.
+  ENDMETHOD.                    "user_action
+
+  METHOD upld.
+    DATA: lt_excel_data      TYPE tt_excel_data,
+          lt_bin_data        TYPE w3mimetabtype,
+          lt_worksheet_names TYPE if_fdt_doc_spreadsheet=>t_worksheet_names,
+          lv_index           TYPE i VALUE 0.
+
+    FIELD-SYMBOLS: <fs_worksheet> TYPE STANDARD TABLE,
+                   <fs_row>       TYPE any,
+                   <fs_cast_row>  TYPE ty_excel_data.
+
+    IF lines( gt_file ) > 0.
+      CLEAR: lt_bin_data,
+             lt_worksheet_names.
+      cl_gui_frontend_services=>gui_upload( EXPORTING
+                                            filename = |{ gt_file[ 1 ]-filename }|
+                                            filetype = c_bin
+                                            CHANGING
+                                            data_tab = lt_bin_data ).
+      DATA(lv_bin_data) = cl_bcs_convert=>solix_to_xstring( it_solix = lt_bin_data ).
+      DATA(lo_excel) = NEW cl_fdt_xl_spreadsheet( document_name = CONV #( gt_file[ 1 ]-filename )
+                                                 xdocument = lv_bin_data ).
+      lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names( IMPORTING worksheet_names = lt_worksheet_names ).
+      IF lines( lt_worksheet_names ) > 0.
+        DATA(lo_worksheet_itab) = lo_excel->if_fdt_doc_spreadsheet~get_itab_from_worksheet( lt_worksheet_names[ 1 ] ).
+        ASSIGN lo_worksheet_itab->* TO <fs_worksheet>.
+        IF <fs_worksheet> IS ASSIGNED.
+          CLEAR: lv_index,
+                 lt_excel_data.
+          LOOP AT <fs_worksheet> ASSIGNING <fs_row>.
+            ADD 1 TO lv_index.
+*C-->Skip the first row which is the header
+            IF lv_index = 1.
+              CONTINUE.
+            ENDIF.
+*C-->To remove empty rows
+            IF <fs_row> IS INITIAL.
+              EXIT.
+            ENDIF.
+            ASSIGN <fs_row> TO <fs_cast_row> CASTING.
+            IF <fs_cast_row> IS ASSIGNED.
+              APPEND <fs_cast_row> TO lt_excel_data.
+              UNASSIGN <fs_cast_row>.
+            ENDIF.
+          ENDLOOP.
+          IF lt_excel_data IS NOT INITIAL.
+            CLEAR gt_dd07v.
+            CALL FUNCTION 'DDIF_DOMA_GET'
+              EXPORTING
+                name          = c_zd_hmd_mot
+                langu         = c_e
+              TABLES
+                dd07v_tab     = gt_dd07v
+              EXCEPTIONS
+                illegal_input = 1
+                OTHERS        = 2.
+            IF sy-subrc = 0 AND gt_dd07v IS NOT INITIAL.
+              SORT gt_dd07v BY domvalue_l.
+              CLEAR gv_first.
+              gv_first = gt_dd07v[ 1 ]-domvalue_l.
+              CLEAR gv_dd07v_count.
+              gv_dd07v_count = lines( gt_dd07v ).
+              CLEAR gv_last.
+              gv_last = gt_dd07v[ gv_dd07v_count ]-domvalue_l.
+            ENDIF.
+
+            me->append_excl_data_to_int_tab( lt_excel_data ).
+
+            validate_werks( ).
+
+            validate_profl( ).
+
+            validate_mot( ).
+
+            me->check_file_err( ).
+
+            CLEAR gt_dd07v.
+
+            IF gt_zehst_dg_cr[] IS NOT INITIAL.
+              me->save_to_db( ).
+            ENDIF.
+
+            me->upload_success( ).
+          ELSE.
+*C-->Data not found
+            MESSAGE s013(zehscl_spec_create)
+            DISPLAY LIKE c_e.
+            LEAVE LIST-PROCESSING.
+          ENDIF.
+          IF <fs_row> IS ASSIGNED.
+            UNASSIGN <fs_row>.
+          ENDIF.
+          CLEAR: lv_index,
+                 lt_excel_data.
+          UNASSIGN <fs_worksheet>.
+        ENDIF.
+      ENDIF.
+      CLEAR: lt_bin_data,
+             lt_worksheet_names.
+    ENDIF.
+    CLEAR gt_file.
+  ENDMETHOD.                    "upld
+
+  METHOD validate_plant.
+    IF s_werks[] IS NOT INITIAL.
+      SELECT werks
+      FROM t001w
+      INTO TABLE @DATA(lt_t001w)
+      WHERE werks IN @s_werks[].
+      IF sy-subrc = 0.
+        SORT lt_t001w BY werks.
+      ENDIF.
+      LOOP AT s_werks[] INTO DATA(ls_werks).
+        DATA(ls_t001w) = VALUE #( lt_t001w[ werks = ls_werks-low ] OPTIONAL ).
+        IF ls_t001w IS INITIAL.
+*C-->Plant does not exist
+          MESSAGE s010(zehscl_spec_create)
+          WITH ls_werks-low
+          DISPLAY LIKE c_e.
+          LEAVE LIST-PROCESSING.
+        ENDIF.
+        CLEAR: ls_werks,
+               ls_t001w.
+      ENDLOOP.
+      CLEAR lt_t001w.
+    ENDIF.
+  ENDMETHOD.                    "validate_plant
+
+  METHOD disp.
+    DATA ls_zehst_dg_cr_alv TYPE ty_zehst_dg_cr_alv.
+
+    IF s_werks[] IS NOT INITIAL.
+      SELECT *
+      FROM zehst_dg_cr
+      INTO TABLE @DATA(lt_zehst_dg_cr_disp)
+      WHERE werks IN @s_werks[].
+      IF sy-subrc = 0.
+        LOOP AT lt_zehst_dg_cr_disp INTO DATA(ls_zehst_dg_cr_disp).
+          ls_zehst_dg_cr_alv-werks  = ls_zehst_dg_cr_disp-werks.  "C-->Plant
+          ls_zehst_dg_cr_alv-name1  = ls_zehst_dg_cr_disp-name1.  "C-->Plant Description
+          ls_zehst_dg_cr_alv-land1  = ls_zehst_dg_cr_disp-land1.  "C-->Country
+          ls_zehst_dg_cr_alv-landx  = ls_zehst_dg_cr_disp-landx.  "C-->Country description
+          ls_zehst_dg_cr_alv-regio  = ls_zehst_dg_cr_disp-regio.  "C-->Region
+          ls_zehst_dg_cr_alv-bezei  = ls_zehst_dg_cr_disp-bezei.  "C-->Region Description
+          ls_zehst_dg_cr_alv-profl  = ls_zehst_dg_cr_disp-profl.  "C-->DGIndProfile
+          ls_zehst_dg_cr_alv-profld = ls_zehst_dg_cr_disp-profld. "C-->DGIndProfile Description
+          ls_zehst_dg_cr_alv-lgscnt = ls_zehst_dg_cr_disp-lgscnt. "C-->Logistics Site contacts
+          ls_zehst_dg_cr_alv-hsecnt = ls_zehst_dg_cr_disp-hsecnt. "C-->HSE Site contact
+          ls_zehst_dg_cr_alv-mot    = ls_zehst_dg_cr_disp-mot.    "C-->ModeTransCat
+          ls_zehst_dg_cr_alv-motd   = ls_zehst_dg_cr_disp-motd.   "C-->DescModTransCat
+          APPEND ls_zehst_dg_cr_alv TO gt_zehst_dg_cr_alv.
+          CLEAR: ls_zehst_dg_cr_alv,
+                 ls_zehst_dg_cr_disp.
+        ENDLOOP.
+        CLEAR lt_zehst_dg_cr_disp.
+      ELSE.
+*C-->No records exist for the given selection screen input
+        MESSAGE s011(zehscl_spec_create)
+        DISPLAY LIKE c_e.
+        LEAVE LIST-PROCESSING.
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.                    "disp
+
+  METHOD append_excl_data_to_int_tab.
+    DATA: ls_zehst_dg_cr     TYPE zehst_dg_cr,
+          ls_zehst_dg_cr_alv TYPE ty_zehst_dg_cr_alv,
+          lv_domvalue_l      TYPE domvalue_l,
+          lt_plant           TYPE TABLE OF ty_plant,
+          ls_plant           TYPE ty_plant,
+          lt_profile         TYPE TABLE OF ty_profile,
+          ls_profile         TYPE ty_profile,
+          lv_werks           TYPE werks_d,
+          lv_profl           TYPE zde_dg_ind_pro.
+
+    CLEAR: ls_zehst_dg_cr,
+           ls_zehst_dg_cr_alv.
+
+    LOOP AT mi_exceldata INTO DATA(ls_exceldata).
+      ls_plant-werks = ls_exceldata-werks.
+      APPEND ls_plant TO lt_plant.
+      CLEAR: ls_plant,
+             ls_exceldata.
+    ENDLOOP.
+    IF lt_plant IS NOT INITIAL.
+      SORT lt_plant BY werks.
+      DELETE ADJACENT DUPLICATES FROM lt_plant COMPARING werks.
+      SELECT werks, "C-->Plant
+             name1, "C-->Plant description
+             land1, "C-->Country Key
+             regio  "C-->Region
+      FROM t001w
+      INTO TABLE @DATA(lt_t001w)
+      FOR ALL ENTRIES IN @lt_plant
+      WHERE werks = @lt_plant-werks.
+      IF sy-subrc = 0.
+        SORT lt_t001w BY werks.
+        DATA(lt_t001w_temp) = lt_t001w[].
+        SORT lt_t001w_temp BY land1.
+        DELETE ADJACENT DUPLICATES FROM lt_t001w_temp COMPARING land1.
+        IF lt_t001w_temp IS NOT INITIAL.
+          SELECT spras, "C-->Language Key
+                 land1, "C-->Country Key
+                 landx  "C-->Country Name
+          FROM t005t
+          INTO TABLE @DATA(lt_t005t)
+          FOR ALL ENTRIES IN @lt_t001w_temp
+          WHERE spras = @c_e
+          AND land1 = @lt_t001w_temp-land1.
+          IF sy-subrc = 0.
+            SORT lt_t005t BY land1.
+          ENDIF.
+        ENDIF.
+
+        CLEAR lt_t001w_temp.
+        lt_t001w_temp = lt_t001w[].
+        SORT lt_t001w_temp BY land1 regio.
+        DELETE ADJACENT DUPLICATES FROM lt_t001w_temp COMPARING land1 regio.
+        IF lt_t001w_temp IS NOT INITIAL.
+          SELECT spras, "C-->Language Key
+                 land1, "C-->Country Key
+                 bland, "C-->Region (State, Province, County)
+                 bezei  "C-->Description
+          FROM t005u
+          INTO TABLE @DATA(lt_t005u)
+          FOR ALL ENTRIES IN @lt_t001w_temp
+          WHERE spras = @c_e
+          AND land1 = @lt_t001w_temp-land1
+          AND bland = @lt_t001w_temp-regio.
+          IF sy-subrc = 0.
+            SORT lt_t005u BY land1 bland.
+          ENDIF.
+          CLEAR lt_t001w_temp.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    LOOP AT mi_exceldata INTO DATA(ls_excel).
+      ls_profile-profl = ls_excel-profl.
+      APPEND ls_profile TO lt_profile.
+      CLEAR: ls_profile,
+             ls_excel.
+    ENDLOOP.
+    IF lt_profile IS NOT INITIAL.
+      SORT lt_profile BY profl.
+      DELETE ADJACENT DUPLICATES FROM lt_profile COMPARING profl.
+      SELECT dgspras, "C-->Language Key
+             profl,   "C-->Dangerous Goods Indicator Profile
+             profld   "C-->Description of indicator profile for material master
+      FROM tdg42
+      INTO TABLE @DATA(lt_tdg42)
+      FOR ALL ENTRIES IN @lt_profile
+      WHERE dgspras = @c_e
+      AND profl = @lt_profile-profl.
+      IF sy-subrc = 0.
+        SORT lt_tdg42 BY profl.
+      ENDIF.
+    ENDIF.
+
+    LOOP AT mi_exceldata INTO DATA(ls_excel_data).
+*C-->Plant
+      ls_zehst_dg_cr-werks      = ls_excel_data-werks.
+      ls_zehst_dg_cr_alv-werks  = ls_zehst_dg_cr-werks.
+      IF ls_excel_data-werks IS NOT INITIAL.
+        CLEAR lv_werks.
+        lv_werks = ls_excel_data-werks.
+        IF lv_werks IS NOT INITIAL.
+          DATA(ls_t001w) = VALUE #( lt_t001w[ werks = lv_werks ] OPTIONAL ).
+          IF ls_t001w IS NOT INITIAL.
+*C-->Plant description
+            ls_zehst_dg_cr_alv-name1 = ls_t001w-name1.
+            ls_zehst_dg_cr-name1     = ls_t001w-name1.
+*C-->Country
+            ls_zehst_dg_cr_alv-land1 = ls_t001w-land1.
+            ls_zehst_dg_cr-land1     = ls_t001w-land1.
+            IF ls_t001w-land1 IS NOT INITIAL.
+              DATA(ls_t005t) = VALUE #( lt_t005t[ land1 = ls_t001w-land1 ] OPTIONAL ).
+              IF ls_t005t IS NOT INITIAL.
+*C-->Country Description
+                ls_zehst_dg_cr_alv-landx = ls_t005t-landx.
+                ls_zehst_dg_cr-landx     = ls_t005t-landx.
+              ENDIF.
+*C-->Region
+              ls_zehst_dg_cr_alv-regio = ls_t001w-regio.
+              ls_zehst_dg_cr-regio     = ls_t001w-regio.
+              IF ls_t001w-regio IS NOT INITIAL.
+                DATA(ls_t005u) = VALUE #( lt_t005u[ land1 = ls_t001w-land1
+                                                    bland = ls_t001w-regio ] OPTIONAL ).
+                IF ls_t005u IS NOT INITIAL.
+*C-->Region description
+                  ls_zehst_dg_cr_alv-bezei  = ls_t005u-bezei.
+                  ls_zehst_dg_cr-bezei      = ls_t005u-bezei.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+          CLEAR lv_werks.
+        ENDIF.
+      ENDIF.
+*C-->Dangerous Goods Indicator Profile
+      ls_zehst_dg_cr-profl     = ls_excel_data-profl.
+      ls_zehst_dg_cr_alv-profl = ls_zehst_dg_cr-profl.
+      IF ls_excel_data-profl IS NOT INITIAL.
+        CLEAR lv_profl.
+        lv_profl = ls_excel_data-profl.
+        IF lv_profl IS NOT INITIAL.
+          DATA(ls_tdg42) = VALUE #( lt_tdg42[ profl = lv_profl ] OPTIONAL ).
+          IF ls_tdg42 IS NOT INITIAL.
+*C-->DGIndProfile Description
+            ls_zehst_dg_cr_alv-profld = ls_tdg42-profld.
+            ls_zehst_dg_cr-profld     = ls_tdg42-profld.
+          ENDIF.
+          CLEAR lv_profl.
+        ENDIF.
+      ENDIF.
+*C-->Logistics Site contacts
+      ls_zehst_dg_cr_alv-lgscnt = ls_excel_data-lgscnt.
+      ls_zehst_dg_cr-lgscnt     = ls_excel_data-lgscnt.
+*C-->HSE Site contact
+      ls_zehst_dg_cr_alv-hsecnt = ls_excel_data-hsecnt.
+      ls_zehst_dg_cr-hsecnt     = ls_excel_data-hsecnt.
+*C-->ModeTransCat
+      IF ls_zehst_dg_cr_alv-message IS INITIAL.
+        IF ls_excel_data-mot IS NOT INITIAL AND
+           ls_excel_data-mot CN c_num.
+          ls_zehst_dg_cr_alv-type    = c_e.
+*C-->ModeTransCat value should be in between
+          ls_zehst_dg_cr_alv-message =
+          |{ text-007 }| && | | && |{ gv_first }| && | | && |{ c_and }| && | | && |{ gv_last }| .
+        ENDIF.
+        IF ls_zehst_dg_cr_alv-message IS INITIAL.
+          DATA(lv_excl_len) = strlen( ls_excel_data-mot ).
+          IF lv_excl_len GT 2.
+            ls_zehst_dg_cr_alv-type    = c_e.
+*C-->ModeTransCat value should be in between
+            ls_zehst_dg_cr_alv-message =
+            |{ text-007 }| && | | && |{ gv_first }| && | | && |{ c_and }| && | | && |{ gv_last }| .
+          ENDIF.
+          CLEAR lv_excl_len.
+        ENDIF.
+        IF ls_excel_data-mot IS NOT INITIAL.
+          ls_zehst_dg_cr_alv-mot     = ls_excel_data-mot.
+          ls_zehst_dg_cr-mot         = ls_excel_data-mot.
+          CLEAR lv_domvalue_l.
+          lv_domvalue_l = ls_excel_data-mot.
+          DATA(ls_dd07v) = VALUE #( gt_dd07v[ domvalue_l = lv_domvalue_l ] OPTIONAL ).
+          IF ls_dd07v-ddtext IS NOT INITIAL.
+*C-->DescModTransCat
+            ls_zehst_dg_cr_alv-motd  = ls_dd07v-ddtext.
+            ls_zehst_dg_cr-motd      = ls_dd07v-ddtext.
+          ENDIF.
+          CLEAR lv_domvalue_l.
+        ELSE.
+          ls_zehst_dg_cr_alv-mot    = c_00.
+        ENDIF.
+      ENDIF.
+      AT END OF mot.
+        IF ls_zehst_dg_cr_alv-message IS INITIAL.
+          ls_zehst_dg_cr-ersda = sy-datum.
+          ls_zehst_dg_cr-ernam = sy-uname.
+          APPEND ls_zehst_dg_cr TO gt_zehst_dg_cr.
+        ENDIF.
+*C-->If errors display in ALV
+        APPEND ls_zehst_dg_cr_alv TO gt_zehst_dg_cr_alv.
+        CLEAR: ls_zehst_dg_cr_alv,
+               ls_zehst_dg_cr.
+      ENDAT.
+      CLEAR: ls_excel_data,
+             ls_t001w,
+             ls_t005u,
+             ls_tdg42,
+             ls_dd07v.
+    ENDLOOP.
+    CLEAR: ls_excel_data,
+           ls_zehst_dg_cr,
+           ls_zehst_dg_cr_alv.
+  ENDMETHOD.                    "append_excl_data_to_int_tab
+
+  METHOD check_file_err.
+    DATA: lv_werks TYPE string,
+          lv_profl TYPE string,
+          lv_mot   TYPE string.
+
+    IF gt_zehst_dg_cr[] IS NOT INITIAL.
+      SORT gt_zehst_dg_cr BY werks profl mot.
+      DELETE ADJACENT DUPLICATES FROM gt_zehst_dg_cr COMPARING werks profl mot.
+      SELECT *
+      FROM zehst_dg_cr
+      INTO TABLE @DATA(lt_zehst_dg_cr_rec)
+      FOR ALL ENTRIES IN @gt_zehst_dg_cr
+      WHERE werks = @gt_zehst_dg_cr-werks
+      AND profl = @gt_zehst_dg_cr-profl
+      AND mot = @gt_zehst_dg_cr-mot.
+      IF sy-subrc = 0.
+        SORT lt_zehst_dg_cr_rec BY werks profl mot.
+      ENDIF.
+    ENDIF.
+
+    SORT gt_zehst_dg_cr_alv BY werks profl mot.
+    DELETE ADJACENT DUPLICATES FROM gt_zehst_dg_cr_alv COMPARING werks profl mot.
+    LOOP AT gt_zehst_dg_cr ASSIGNING FIELD-SYMBOL(<fs_zehst_dg_cr>).
+      IF <fs_zehst_dg_cr> IS ASSIGNED.
+        DATA(ls_zehst_dg_cr_rec) = VALUE #( lt_zehst_dg_cr_rec[ werks = <fs_zehst_dg_cr>-werks
+                                                                profl = <fs_zehst_dg_cr>-profl
+                                                                  mot = <fs_zehst_dg_cr>-mot ] OPTIONAL ).
+        IF ls_zehst_dg_cr_rec IS NOT INITIAL.
+*C-->Client
+          <fs_zehst_dg_cr>-mandt = ls_zehst_dg_cr_rec-mandt.
+*C-->Plant
+          IF <fs_zehst_dg_cr>-werks IS INITIAL.
+            <fs_zehst_dg_cr>-werks = ls_zehst_dg_cr_rec-werks.
+          ENDIF.
+*C-->ModeTransCat
+          IF <fs_zehst_dg_cr>-mot IS INITIAL.
+            <fs_zehst_dg_cr>-mot = ls_zehst_dg_cr_rec-mot.
+          ENDIF.
+*C-->Plant description
+          IF <fs_zehst_dg_cr>-name1 IS INITIAL.
+            <fs_zehst_dg_cr>-name1 = ls_zehst_dg_cr_rec-name1.
+          ENDIF.
+*C-->Country
+          IF <fs_zehst_dg_cr>-land1 IS INITIAL.
+            <fs_zehst_dg_cr>-land1 = ls_zehst_dg_cr_rec-land1.
+          ENDIF.
+*C-->Country Description
+          IF <fs_zehst_dg_cr>-landx IS INITIAL.
+            <fs_zehst_dg_cr>-landx = ls_zehst_dg_cr_rec-landx.
+          ENDIF.
+*C-->Region
+          IF <fs_zehst_dg_cr>-regio IS INITIAL.
+            <fs_zehst_dg_cr>-regio = ls_zehst_dg_cr_rec-regio.
+          ENDIF.
+*C-->Region Description
+          IF <fs_zehst_dg_cr>-bezei IS INITIAL.
+            <fs_zehst_dg_cr>-bezei = ls_zehst_dg_cr_rec-bezei.
+          ENDIF.
+*C-->Dangerous Goods Indicator Profile
+          IF <fs_zehst_dg_cr>-profl IS INITIAL.
+            <fs_zehst_dg_cr>-profl = ls_zehst_dg_cr_rec-profl.
+          ENDIF.
+*C-->DGIndProfile Description
+          IF <fs_zehst_dg_cr>-profld IS INITIAL.
+            <fs_zehst_dg_cr>-profld = ls_zehst_dg_cr_rec-profld.
+          ENDIF.
+*C-->Logistics Site contacts
+          IF <fs_zehst_dg_cr>-lgscnt IS INITIAL.
+            <fs_zehst_dg_cr>-lgscnt = ls_zehst_dg_cr_rec-lgscnt.
+          ENDIF.
+*C-->HSE Site contact
+          IF <fs_zehst_dg_cr>-hsecnt IS INITIAL.
+            <fs_zehst_dg_cr>-hsecnt = ls_zehst_dg_cr_rec-hsecnt.
+          ENDIF.
+*C-->DescModTransCat
+          IF <fs_zehst_dg_cr>-motd IS INITIAL.
+            <fs_zehst_dg_cr>-motd = ls_zehst_dg_cr_rec-motd.
+          ENDIF.
+          lv_werks = <fs_zehst_dg_cr>-werks.
+          lv_profl = <fs_zehst_dg_cr>-profl.
+          lv_mot   = <fs_zehst_dg_cr>-mot.
+          ASSIGN gt_zehst_dg_cr_alv[ werks = lv_werks
+                                     profl = lv_profl
+                                     mot   = lv_mot ]
+          TO FIELD-SYMBOL(<fs_zehst_dg_cr_alv>).
+          IF <fs_zehst_dg_cr_alv> IS ASSIGNED.
+*C-->Record already exists
+            <fs_zehst_dg_cr_alv>-message = text-010.
+          ENDIF.
+          CLEAR: <fs_zehst_dg_cr>-werks,
+                 lv_werks,
+                 lv_profl,
+                 lv_mot.
+        ENDIF.
+      ENDIF.
+      CLEAR ls_zehst_dg_cr_rec.
+    ENDLOOP.
+    DELETE gt_zehst_dg_cr WHERE werks IS INITIAL.
+
+    CLEAR: lt_zehst_dg_cr_rec,
+           ls_zehst_dg_cr_rec.
+    IF <fs_zehst_dg_cr> IS ASSIGNED.
+      UNASSIGN <fs_zehst_dg_cr>.
+    ENDIF.
+    IF <fs_zehst_dg_cr_alv> IS ASSIGNED.
+      UNASSIGN <fs_zehst_dg_cr_alv>.
+    ENDIF.
+  ENDMETHOD.        "check_file_err
+
+  METHOD upload_success.
+    DATA: lv_werks TYPE string,
+          lv_profl TYPE string,
+          lv_mot   TYPE string.
+
+    SORT gt_zehst_dg_cr_alv BY werks profl mot.
+    CLEAR: lv_werks,
+           lv_profl,
+           lv_mot.
+    LOOP AT gt_zehst_dg_cr INTO DATA(ls_zehst_dg_cr).
+      lv_werks = ls_zehst_dg_cr-werks.
+      lv_profl = ls_zehst_dg_cr-profl.
+      lv_mot   = ls_zehst_dg_cr-mot.
+      ASSIGN gt_zehst_dg_cr_alv[ werks = lv_werks
+                                 profl = lv_profl
+                                   mot = lv_mot ]
+      TO FIELD-SYMBOL(<fs_zehst_dg_cr_alv>).
+      IF <fs_zehst_dg_cr_alv> IS ASSIGNED.
+*C-->For created or updated records
+*C-->Upload successful
+        <fs_zehst_dg_cr_alv>-message = text-002.
+      ENDIF.
+      CLEAR: ls_zehst_dg_cr,
+             lv_werks,
+             lv_profl,
+             lv_mot.
+    ENDLOOP.
+    IF <fs_zehst_dg_cr_alv> IS ASSIGNED.
+      UNASSIGN <fs_zehst_dg_cr_alv>.
+    ENDIF.
+  ENDMETHOD.     "Upload_success
+
+  METHOD validate_werks.
+    DATA: lv_werks TYPE string,
+          lv_profl TYPE string,
+          lv_mot   TYPE string.
+
+    IF gt_zehst_dg_cr[] IS NOT INITIAL.
+      DATA(lt_zehst_dg_cr) = gt_zehst_dg_cr[].
+      SORT lt_zehst_dg_cr BY werks.
+      DELETE ADJACENT DUPLICATES FROM lt_zehst_dg_cr COMPARING werks.
+      IF lt_zehst_dg_cr IS NOT INITIAL.
+        SELECT werks "C-->Plant
+          FROM t001w
+          INTO TABLE @DATA(lt_t001w)
+          FOR ALL ENTRIES IN @lt_zehst_dg_cr
+          WHERE werks = @lt_zehst_dg_cr-werks.
+        IF sy-subrc = 0.
+          SORT lt_t001w BY werks.
+          DATA(lv_t001w_count) = lines( lt_t001w ).
+        ENDIF.
+        DATA(lv_zehst_dg_cr_count) = lines( lt_zehst_dg_cr ).
+        CLEAR lt_zehst_dg_cr.
+      ENDIF.
+    ENDIF.
+
+    SORT gt_zehst_dg_cr_alv BY werks profl mot.
+    IF lv_zehst_dg_cr_count <> lv_t001w_count.
+      CLEAR: lv_werks,
+             lv_profl,
+             lv_mot.
+      LOOP AT gt_zehst_dg_cr ASSIGNING FIELD-SYMBOL(<fs_zehst_dg_cr>).
+        DATA(ls_t001w) = VALUE #( lt_t001w[ werks = <fs_zehst_dg_cr>-werks ] OPTIONAL ).
+        IF ls_t001w IS INITIAL.
+          lv_werks = <fs_zehst_dg_cr>-werks.
+          lv_profl = <fs_zehst_dg_cr>-profl.
+          lv_mot   = <fs_zehst_dg_cr>-mot.
+          ASSIGN gt_zehst_dg_cr_alv[ werks = lv_werks
+                                     profl = lv_profl
+                                       mot = lv_mot ]
+          TO FIELD-SYMBOL(<fs_zehst_dg_cr_alv>).
+          IF <fs_zehst_dg_cr_alv> IS ASSIGNED.
+*C-->Plant is invalid
+            <fs_zehst_dg_cr_alv>-message = text-006.
+            <fs_zehst_dg_cr_alv>-type    = c_e.
+            CLEAR: <fs_zehst_dg_cr>-werks,
+                   lv_werks,
+                   lv_profl,
+                   lv_mot.
+            UNASSIGN <fs_zehst_dg_cr_alv>.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+      IF <fs_zehst_dg_cr> IS ASSIGNED.
+        UNASSIGN <fs_zehst_dg_cr>.
+      ENDIF.
+      DELETE gt_zehst_dg_cr WHERE werks IS INITIAL.
+    ENDIF.
+    CLEAR: lt_t001w,
+           lv_t001w_count,
+           lv_zehst_dg_cr_count.
+  ENDMETHOD.                    "validate_werks
+
+  METHOD validate_profl.
+    DATA: lv_werks TYPE string,
+          lv_profl TYPE string,
+          lv_mot   TYPE string.
+
+    IF gt_zehst_dg_cr[] IS NOT INITIAL.
+      DATA(lt_zehst_dg_cr) = gt_zehst_dg_cr[].
+      SORT lt_zehst_dg_cr BY profl.
+      DELETE ADJACENT DUPLICATES FROM lt_zehst_dg_cr COMPARING profl.
+      IF lt_zehst_dg_cr IS NOT INITIAL.
+        SELECT profl "C-->DGIndProfile
+          FROM tdg41
+          INTO TABLE @DATA(lt_tdg41)
+          FOR ALL ENTRIES IN @lt_zehst_dg_cr
+          WHERE profl = @lt_zehst_dg_cr-profl.
+        IF sy-subrc = 0.
+          SORT lt_tdg41 BY profl.
+          DATA(lv_tdg41_count) = lines( lt_tdg41 ).
+        ENDIF.
+        DATA(lv_zehst_dg_cr_count) = lines( lt_zehst_dg_cr ).
+        CLEAR lt_zehst_dg_cr.
+      ENDIF.
+    ENDIF.
+
+    SORT gt_zehst_dg_cr_alv BY werks profl mot.
+    IF lv_zehst_dg_cr_count <> lv_tdg41_count.
+      CLEAR: lv_werks,
+             lv_profl,
+             lv_mot.
+      LOOP AT gt_zehst_dg_cr ASSIGNING FIELD-SYMBOL(<fs_zehst_dg_cr>).
+        DATA(ls_tdg41) = VALUE #( lt_tdg41[ profl = <fs_zehst_dg_cr>-profl ] OPTIONAL ).
+        IF ls_tdg41 IS INITIAL.
+          lv_werks = <fs_zehst_dg_cr>-werks.
+          lv_profl = <fs_zehst_dg_cr>-profl.
+          lv_mot   = <fs_zehst_dg_cr>-mot.
+          ASSIGN gt_zehst_dg_cr_alv[ werks = lv_werks
+                                     profl = lv_profl
+                                       mot = lv_mot ]
+          TO FIELD-SYMBOL(<fs_zehst_dg_cr_alv>).
+          IF <fs_zehst_dg_cr_alv> IS ASSIGNED.
+*C-->DGIndProfile is invalid
+            <fs_zehst_dg_cr_alv>-message = text-005.
+            <fs_zehst_dg_cr_alv>-type    = c_e.
+            CLEAR: <fs_zehst_dg_cr>-profl,
+                   lv_werks,
+                   lv_profl,
+                   lv_mot.
+            UNASSIGN <fs_zehst_dg_cr_alv>.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+      IF <fs_zehst_dg_cr> IS ASSIGNED.
+        UNASSIGN <fs_zehst_dg_cr>.
+      ENDIF.
+      DELETE gt_zehst_dg_cr WHERE profl IS INITIAL.
+    ENDIF.
+
+    CLEAR: lt_tdg41,
+           lv_tdg41_count,
+           lv_zehst_dg_cr_count.
+  ENDMETHOD.                    "validate_profl
+
+  METHOD validate_mot.
+    DATA: lv_werks      TYPE string,
+          lv_profl      TYPE string,
+          lv_mot        TYPE string,
+          lv_domvalue_l TYPE domvalue_l.
+
+    IF gt_zehst_dg_cr[] IS NOT INITIAL.
+      DATA(lt_zehst_dg_cr) = gt_zehst_dg_cr[].
+      SORT lt_zehst_dg_cr BY mot.
+      DATA(lv_zehst_dg_cr_count) = lines( lt_zehst_dg_cr ).
+      CLEAR lt_zehst_dg_cr.
+    ENDIF.
+    SORT gt_zehst_dg_cr_alv BY werks profl mot.
+    IF lv_zehst_dg_cr_count <> gv_dd07v_count.
+      CLEAR: lv_werks,
+             lv_profl,
+             lv_mot.
+      LOOP AT gt_zehst_dg_cr ASSIGNING FIELD-SYMBOL(<fs_zehst_dg_cr>).
+        CLEAR lv_domvalue_l.
+        lv_domvalue_l = <fs_zehst_dg_cr>-mot.
+        DATA(ls_dd07v) = VALUE #( gt_dd07v[ domvalue_l = lv_domvalue_l ] OPTIONAL ).
+        IF ls_dd07v IS INITIAL.
+          lv_werks = <fs_zehst_dg_cr>-werks.
+          lv_profl = <fs_zehst_dg_cr>-profl.
+          lv_mot   = <fs_zehst_dg_cr>-mot.
+          ASSIGN gt_zehst_dg_cr_alv[ werks = lv_werks
+                                     profl = lv_profl
+                                       mot = lv_mot ]
+          TO FIELD-SYMBOL(<fs_zehst_dg_cr_alv>).
+          IF <fs_zehst_dg_cr_alv> IS ASSIGNED.
+*C-->ModeTransCat value should be in between
+            <fs_zehst_dg_cr_alv>-message =
+            |{ text-007 }| && | | && |{ gv_first }| && | | && |{ c_and }| && | | && |{ gv_last }| .
+            <fs_zehst_dg_cr_alv>-type    = c_e.
+            CLEAR: <fs_zehst_dg_cr>-mot,
+                   lv_werks,
+                   lv_profl,
+                   lv_mot.
+            UNASSIGN <fs_zehst_dg_cr_alv>.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+        CLEAR lv_domvalue_l.
+      ENDLOOP.
+      IF <fs_zehst_dg_cr> IS ASSIGNED.
+        UNASSIGN <fs_zehst_dg_cr>.
+      ENDIF.
+      DELETE gt_zehst_dg_cr WHERE mot IS INITIAL.
+    ENDIF.
+    CLEAR: gv_dd07v_count,
+           lv_zehst_dg_cr_count,
+           gv_first,
+           gv_last.
+  ENDMETHOD.                    "validate_mot
+
+  METHOD save_to_db.
+    CALL FUNCTION 'ENQUEUE_E_TABLE'
+      EXPORTING
+        mode_rstable   = c_enqmode
+        tabname        = c_tabname
+      EXCEPTIONS
+        foreign_lock   = 1
+        system_failure = 2
+        OTHERS         = 3.
+    IF sy-subrc = 0.
+      MODIFY zehst_dg_cr FROM TABLE gt_zehst_dg_cr.
+      IF sy-subrc = 0.
+        COMMIT WORK.
+*C-->File Uploaded Successfully
+        MESSAGE s005(zehscl_spec_create).
+      ELSE.
+        ROLLBACK WORK.
+*C-->File Upload failed
+        MESSAGE e006(zehscl_spec_create).
+      ENDIF.
+      CALL FUNCTION 'DEQUEUE_E_TABLE'
+        EXPORTING
+          mode_rstable = c_enqmode
+          tabname      = c_tabname.
+    ELSEIF sy-subrc = 1.
+*C-->Unable to update records as table is locked
+      MESSAGE e004(zehscl_spec_create).
+      LEAVE LIST-PROCESSING.
+      RETURN.
+    ELSEIF sy-subrc = 2 OR
+           sy-subrc = 3.
+*C-->Error in FM ENQUEUE_E_TABLE
+      MESSAGE e007(zehscl_spec_create).
+      LEAVE LIST-PROCESSING.
+    ENDIF.
+  ENDMETHOD.                    "save_to_db
+
+  METHOD file_pop_up.
+    DATA lv_rc TYPE i.
+
+    CLEAR: gt_file,
+           lv_rc.
+    CALL METHOD cl_gui_frontend_services=>file_open_dialog
+      CHANGING
+        file_table              = gt_file
+        rc                      = lv_rc
+      EXCEPTIONS
+        file_open_dialog_failed = 1
+        cntl_error              = 2
+        error_no_gui            = 3
+        not_supported_by_gui    = 4
+        OTHERS                  = 5.
+    IF sy-subrc = 0.
+      DATA(ls_file) = VALUE #( gt_file[ 1 ] OPTIONAL ).
+      IF ls_file IS NOT INITIAL.
+        CLEAR p_file.
+        p_file = ls_file-filename.
+        CLEAR ls_file.
+      ENDIF.
+    ELSE.
+      MESSAGE ID sy-msgid
+      TYPE sy-msgty
+      NUMBER sy-msgno
+      WITH sy-msgv1
+           sy-msgv2
+           sy-msgv3
+           sy-msgv4.
+    ENDIF.
+    CLEAR lv_rc.
+  ENDMETHOD.                    "file_pop_up
+
+  METHOD output_error_in_upload.
+    IF gt_zehst_dg_cr_alv IS NOT INITIAL.
+      CALL SCREEN 100.
+    ENDIF.
+  ENDMETHOD.                    "output_errors_in_upload
+
+  METHOD call_alv_error_in_excl_upload.
+    DATA ls_layout TYPE lvc_s_layo.
+
+    CLEAR ls_layout.
+*C-->Populate field catalog
+    me->populate_fieldcat( RECEIVING mr_tfieldcat = DATA(lt_fldcat) ).
+
+*C-->Populate field catalog
+    ls_layout-zebra      = abap_true.
+    ls_layout-cwidth_opt = abap_true.
+
+    me->call_set_table( EXPORTING mi_layout   = ls_layout
+                        CHANGING  mc_outtab   = gt_zehst_dg_cr_alv
+                                  mc_fieldcat = lt_fldcat ).
+    CLEAR: ls_layout,
+           lt_fldcat.
+  ENDMETHOD.                    "call_alv_errors_in_excel_upload
+
+  METHOD populate_fieldcat.
+    DATA lv_col_pos TYPE lvc_colpos VALUE c_fc1_int.
+
+    CLEAR lv_col_pos.
+    IF p_upld = abap_true.
+*C-->Message
+      pop_fcat( EXPORTING mi_reptext     = text-004
+                          mi_colpos      = lv_col_pos
+                          mi_fname       = c_message
+                          mi_outlen      = c_fc10
+                CHANGING  mc_tfieldcat = mr_tfieldcat ).
+      lv_col_pos = lv_col_pos + 1.
+    ENDIF.
+*C-->Plant
+    pop_fcat( EXPORTING mi_reptext     = text-012
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_werks
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->Plant Description
+    pop_fcat( EXPORTING mi_reptext     = text-013
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_name1
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->Country
+    pop_fcat( EXPORTING mi_reptext     = text-021
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_land1
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->Country Description
+    pop_fcat( EXPORTING mi_reptext     = text-022
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_landx
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->Region
+    pop_fcat( EXPORTING mi_reptext     = text-014
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_regio
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->Region Description
+    pop_fcat( EXPORTING mi_reptext     = text-015
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_bezei
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->Dangerous Goods Indicator Profile
+    pop_fcat( EXPORTING mi_reptext     = text-011
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_profl
+                        mi_outlen      = c_fc15
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->DGIndProfile Description
+    pop_fcat( EXPORTING mi_reptext     = text-016
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_profld
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->Logistics Site contacts
+    pop_fcat( EXPORTING mi_reptext     = text-017
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_lgscnt
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->HSE Site contact
+    pop_fcat( EXPORTING mi_reptext     = text-018
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_hsecnt
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->ModeTransCat
+    pop_fcat( EXPORTING mi_reptext     = text-019
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_mot
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+*C-->DescModTransCat
+    pop_fcat( EXPORTING mi_reptext     = text-020
+                        mi_colpos      = lv_col_pos
+                        mi_fname       = c_motd
+                        mi_outlen      = c_fc10
+              CHANGING  mc_tfieldcat = mr_tfieldcat ).
+    lv_col_pos = lv_col_pos + 1.
+    CLEAR lv_col_pos.
+  ENDMETHOD.                    "populate_fieldcat
+
+  METHOD pop_fcat.
+    DATA ls_fldcat TYPE lvc_s_fcat.
+
+    CLEAR ls_fldcat.
+    ls_fldcat-reptext   = mi_reptext.
+    ls_fldcat-col_pos   = mi_colpos .
+    ls_fldcat-fieldname = mi_fname.
+    ls_fldcat-dd_outlen = mi_outlen.
+    ls_fldcat-tabname   = c_gt_zehst_dg_cr_alv.
+    ls_fldcat-no_out    = mi_no_out.
+    APPEND ls_fldcat TO mc_tfieldcat.
+    CLEAR ls_fldcat.
+  ENDMETHOD.                    "pop_fcat
+
+  METHOD call_set_table.
+    IF go_alv IS NOT BOUND.
+      CREATE OBJECT go_alv
+        EXPORTING
+          i_parent = cl_gui_container=>default_screen.
+      SORT gt_zehst_dg_cr_alv BY type.
+      DATA(ls_zehst_dg_cr_alv) = VALUE #( gt_zehst_dg_cr_alv[ type = c_e ] OPTIONAL ).
+      IF ls_zehst_dg_cr_alv IS NOT INITIAL.
+*C-->Please correct the errors in excel file
+        MESSAGE s008(zehscl_spec_create)
+        DISPLAY LIKE c_e.
+      ENDIF.
+      IF go_alv IS BOUND.
+        go_alv->set_table_for_first_display( EXPORTING is_layout       = mi_layout
+                                              CHANGING it_outtab       = mc_outtab
+                                                       it_fieldcatalog = mc_fieldcat ).
+      ENDIF.
+    ENDIF.
+  ENDMETHOD.                    "call_set_table
+ENDCLASS.                    "LCL_UPDATE IMPLEMENTATION
+****Unique***
