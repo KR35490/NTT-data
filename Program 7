@@ -1,0 +1,633 @@
+*-------------------------------------------------------------------------------*
+*&  Author                    : H392923                                         *
+*&  Date                      : 23/01/2025                                      *
+*&  Description               : PR notification to Buyers                       *
+*&  Object ID                 : WI#4000002725                                   *
+*&  Development Request       : CIDK9A1ZOT                                      *
+*&------------------------------------------------------------------------------*
+
+REPORT zrcr_pr_notif_to_buyers.
+
+*C-- Include for global declaration
+INCLUDE zrcu_pr_notif_to_buyers_top.
+
+*C-- Include for selection screen
+INCLUDE zrcu_pr_notif_to_buyers_s01.
+
+*C-- Include for Methods
+INCLUDE zrcu_pr_notif_to_buyers_f01.
+
+INITIALIZATION.
+  IF go_pr IS NOT BOUND.
+    CREATE OBJECT go_pr.
+  ENDIF.
+
+AT SELECTION-SCREEN OUTPUT.
+  IF go_pr IS BOUND.
+    go_pr->at_selection_screen_output( ).
+  ENDIF.
+
+AT SELECTION-SCREEN.
+  IF go_pr IS BOUND.
+    CALL METHOD go_pr->at_selection_screen( ).
+  ENDIF.
+
+START-OF-SELECTION.
+  IF go_pr IS BOUND.
+    go_pr->get_data( ).
+*C--Send Email
+    go_pr->process_data( ).
+*C--Display ALV
+    IF p_print IS NOT INITIAL.
+      go_pr->build_alv( ).
+    ENDIF.
+  ENDIF.
+
+***Unique***
+*-------------------------------------------------------------------------------*
+*&  Author                    : H392923                                         *
+*&  Date                      : 23/01/2025                                      *
+*&  Description               : PR notification to Buyers                       *
+*&  Object ID                 : WI#4000002725                                   *
+*&  Development Request       : CIDK9A1ZOT                                      *
+*&------------------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&  Include           ZRCU_PR_NOTIF_TO_BUYERS_TOP
+*&---------------------------------------------------------------------*
+
+CLASS lcl_pr_notif DEFINITION FINAL.
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_eban,
+            banfn TYPE banfn,
+            bnfpo TYPE bnfpo,
+            loekz TYPE eloek,
+            frgkz TYPE frgkz,
+            frgzu TYPE frgzu,
+            ekgrp TYPE ekgrp,
+            txz01 TYPE txz01,
+            matnr TYPE matnr,
+            werks TYPE ewerk,
+            badat TYPE badat,
+            ekorg TYPE ekorg,
+            ebeln TYPE bstnr,
+           END OF ty_eban,
+           BEGIN OF ty_eban2,
+            ekgrp TYPE ekgrp,
+            banfn TYPE banfn,
+            bnfpo TYPE bnfpo,
+            frgzu TYPE frgzu,
+            txz01 TYPE txz01,
+            matnr TYPE matnr,
+            werks TYPE ewerk,
+            badat TYPE badat,
+            ekorg TYPE ekorg,
+           END OF ty_eban2,
+           BEGIN OF ty_output,
+            banfn TYPE banfn,
+            bnfpo TYPE bnfpo,
+            badat TYPE badat,
+            frgzu TYPE frgzu,
+            ekgrp TYPE ekgrp,
+            matnr TYPE matnr,
+            txz01 TYPE txz01,
+            werks TYPE ewerk,
+            ekorg TYPE ekorg,
+            messg TYPE string,
+           END OF ty_output,
+           BEGIN OF ty_t024,
+             ekgrp TYPE ekgrp,
+             smtp_addr TYPE ad_smtpadr,
+           END OF ty_t024,
+           BEGIN OF ty_t001w,
+            werks TYPE werks_d,
+           END OF ty_t001w,
+            BEGIN OF ty_ekorg,
+           ekorg TYPE ekorg,
+           END OF ty_ekorg,
+           BEGIN OF ty_ekgrp,
+           ekgrp TYPE ekgrp,
+           END OF ty_ekgrp.
+
+    DATA: gt_eban           TYPE STANDARD TABLE OF ty_eban,
+          gt_eban1          TYPE STANDARD TABLE OF ty_eban,
+          gt_eban2          TYPE STANDARD TABLE OF ty_eban2,
+          gs_eban2          TYPE ty_eban2,
+          gs_eban           TYPE ty_eban,
+          gt_output         TYPE STANDARD TABLE OF ty_output,
+          gs_output         TYPE ty_output,
+          gt_t024           TYPE STANDARD TABLE OF ty_t024,
+          gs_t024           TYPE ty_t024,
+          gt_plant          TYPE STANDARD TABLE OF ty_t001w,
+          gt_ekorg          TYPE STANDARD TABLE OF ty_ekorg,
+          gt_ekgrp          TYPE STANDARD TABLE OF ty_ekgrp,
+          gs_plant          TYPE ty_t001w,
+          gv_string         TYPE string,
+          gv_email          TYPE ad_smtpadr,
+          gv_str            TYPE string,
+          gv_str2           TYPE string,
+          gv_str_cs         TYPE string,
+          fl_cnsltd         TYPE char1,
+          fl_exclude        TYPE char1,
+          gv_msg            TYPE string,
+          gv_size           TYPE so_obj_len,
+          gt_binary         TYPE solix_tab,
+          gt_objtxt         TYPE soli_tab,
+          gs_objtxt         TYPE soli,
+          gv_doc_chng       TYPE so_obj_des,
+          go_recipient      TYPE REF TO if_recipient_bcs, "for recipient
+          go_document       TYPE REF TO cl_document_bcs,  "for doc attachment
+          go_send_request   TYPE REF TO cl_bcs,           "for mail sending
+          gv_sent_to_all    TYPE os_boolean,              "for send to all
+          fl_flg            TYPE char1,
+          go_bcs_exception  TYPE REF TO cx_bcs,
+          go_alv            TYPE REF TO cl_salv_table,
+          go_column         TYPE REF TO cl_salv_column_table,
+          go_columns        TYPE REF TO cl_salv_columns,
+          go_ref            TYPE REF TO cx_root.
+
+    CONSTANTS: c_email     TYPE string     VALUE 'S_EMAIL-LOW',
+               c_zrc_plant TYPE char9      VALUE 'ZRC_PLANT',
+               c_actvt     TYPE char5      VALUE 'ACTVT',
+               c_werks     TYPE char5      VALUE 'WERKS',
+               c_03        TYPE char2      VALUE '03',
+               c_e         TYPE c          VALUE 'E',
+               c_i         TYPE c          VALUE 'I',
+               c_s         TYPE c          VALUE 'S',
+               c_x         TYPE c          VALUE 'X',
+               c_2         TYPE frgzu      VALUE '2',
+               c_tab       TYPE c          VALUE cl_abap_char_utilities=>horizontal_tab,
+               c_crlf      TYPE c          VALUE cl_abap_char_utilities=>cr_lf,
+               c_id        TYPE tdid       VALUE 'ST',
+               c_object    TYPE tdobject   VALUE 'TEXT',
+               c_4103      TYPE abap_encod VALUE '4103',
+               c_raw       TYPE so_obj_tp  VALUE 'RAW',
+               c_xls       TYPE so_obj_tp  VALUE 'xls',
+               c_body      TYPE tdobname   VALUE 'ZRCST_PRTOPO_CONV_CONTENT',
+               c_subject   TYPE tdobname   VALUE 'ZRCST_PRTOPO_CONV'.
+
+    METHODS: at_selection_screen_output,
+             at_selection_screen,
+             get_data,
+             process_data,
+             build_alv,
+             columns_header,
+             get_mail_content IMPORTING mi_id TYPE tdid
+                                        mi_name TYPE tdobname
+                                        mi_object TYPE tdobject,
+             send_email,
+             excel_content CHANGING mc_str  TYPE string.
+ENDCLASS.                    "lcl_pr_notif DEFINITION
+
+DATA: go_pr     TYPE REF TO lcl_pr_notif.
+***Unique***
+*-------------------------------------------------------------------------------*
+*&  Author                    : H392923                                         *
+*&  Date                      : 23/01/2025                                      *
+*&  Description               : PR notification to Buyers                       *
+*&  Object ID                 : WI#4000002725                                   *
+*&  Development Request       : CIDK9A1ZOT                                      *
+*&------------------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&  Include           ZRCU_PR_NOTIF_TO_BUYERS_SEL
+*&---------------------------------------------------------------------*
+DATA: gv_banfn TYPE eban-banfn,
+      gv_ekgrp TYPE eban-ekgrp,
+      gv_werks TYPE eban-werks,
+      gv_badat TYPE eban-badat,
+      gv_ekorg TYPE eban-ekorg,
+      gv_ad_smtpadr TYPE ad_smtpadr.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-002.
+SELECT-OPTIONS: s_banfn FOR gv_banfn,
+                s_ekgrp FOR gv_ekgrp,
+                s_werks FOR gv_werks OBLIGATORY,
+                s_badat FOR gv_badat OBLIGATORY,
+                s_ekorg FOR gv_ekorg.
+PARAMETERS      p_print AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE text-001.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS p_chk1 AS CHECKBOX DEFAULT 'X' USER-COMMAND uc.
+SELECTION-SCREEN COMMENT 3(10) text-003.
+SELECTION-SCREEN POSITION 15.
+SELECT-OPTIONS: s_email FOR gv_ad_smtpadr NO INTERVALS.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK b2.
+***Unique***
+*-------------------------------------------------------------------------------*
+*&  Author                    : H392923                                         *
+*&  Date                      : 23/01/2025                                      *
+*&  Description               : PR notification to Buyers                       *
+*&  Object ID                 : WI#4000002725                                   *
+*&  Development Request       : CIDK9A1ZOT                                      *
+*&------------------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&  Include           ZRCU_PR_NOTIF_TO_BUYERS_F01
+*&---------------------------------------------------------------------*
+CLASS lcl_pr_notif  IMPLEMENTATION.
+  METHOD at_selection_screen_output.
+*C--Disabling input for consolidated email
+    LOOP AT SCREEN.
+      IF p_chk1 IS INITIAL.
+        IF screen-name CS c_email.
+          screen-input = 0.
+          MODIFY SCREEN.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.                    "at_selection_screen_output
+  METHOD at_selection_screen.
+*C--Validating Plant
+    IF s_werks[] IS NOT INITIAL.
+      CLEAR gt_plant.
+      SELECT werks
+        FROM t001w
+        INTO TABLE gt_plant
+        WHERE werks IN s_werks.
+      IF sy-subrc IS NOT INITIAL.
+        MESSAGE text-030 TYPE c_e.
+      ENDIF.
+    ENDIF.
+*C--Validating purchase organization
+    IF s_ekorg[] IS NOT INITIAL.
+      SELECT ekorg
+        FROM t024e
+        INTO TABLE gt_ekorg
+        WHERE ekorg IN s_ekorg.
+      IF sy-subrc IS NOT INITIAL.
+        MESSAGE text-028 TYPE c_e.
+      ENDIF.
+    ENDIF.
+*C--Validating purchasing group
+    IF s_ekgrp[] IS NOT INITIAL.
+      SELECT ekgrp
+        FROM t024
+        INTO TABLE gt_ekgrp
+        WHERE ekgrp IN s_ekgrp.
+      IF sy-subrc IS NOT INITIAL.
+        MESSAGE text-029 TYPE c_e.
+      ENDIF.
+    ENDIF.
+    CLEAR:gt_ekorg,gt_ekgrp.
+  ENDMETHOD.                    "at_selection_screen
+
+  METHOD get_data.
+    CLEAR: gt_eban.
+    SELECT banfn
+           bnfpo
+           loekz
+           frgkz
+           frgzu
+           ekgrp
+           txz01
+           matnr
+           werks
+           badat
+           ekorg
+           ebeln
+      FROM eban
+      INTO TABLE gt_eban
+      WHERE banfn IN s_banfn[]
+      AND frgkz EQ c_2
+      AND ekgrp IN s_ekgrp[]
+      AND werks IN s_werks[]
+      AND badat IN s_badat[]
+      AND ekorg IN s_ekorg[].
+    IF sy-subrc = 0.
+      DELETE gt_eban WHERE frgzu IS INITIAL.
+      DELETE gt_eban WHERE ebeln IS NOT INITIAL.
+      DELETE gt_eban WHERE loekz EQ c_x.
+      CLEAR: gs_eban,gs_eban2,gt_eban2,gt_output,gs_output.
+      SORT gt_plant BY werks.
+      LOOP AT gt_eban INTO gs_eban.
+        gs_output-banfn = gs_eban-banfn.
+        gs_output-bnfpo = gs_eban-bnfpo.
+        gs_output-ekgrp = gs_eban-ekgrp.
+        gs_output-frgzu = gs_eban-frgzu.
+        gs_output-txz01 = gs_eban-txz01.
+        gs_output-matnr = gs_eban-matnr.
+        gs_output-werks = gs_eban-werks.
+        gs_output-badat = gs_eban-badat.
+        gs_output-ekorg = gs_eban-ekorg.
+        CLEAR: gs_plant,gv_string,fl_exclude.
+        READ TABLE gt_plant INTO gs_plant WITH KEY werks = gs_eban-werks
+                                                    BINARY SEARCH.
+        IF sy-subrc = 0.
+          AUTHORITY-CHECK OBJECT c_zrc_plant
+                   ID c_actvt FIELD c_03
+                   ID c_werks FIELD gs_plant-werks.
+          IF sy-subrc NE 0.
+            CONCATENATE text-004 gs_plant-werks INTO gv_string SEPARATED BY space.
+            gs_output-messg = gv_string.
+            fl_exclude = abap_true.
+          ENDIF.
+        ENDIF.
+        IF fl_exclude IS INITIAL.
+          gs_eban2-banfn = gs_eban-banfn.
+          gs_eban2-bnfpo = gs_eban-bnfpo.
+          gs_eban2-ekgrp = gs_eban-ekgrp.
+          gs_eban2-frgzu = gs_eban-frgzu.
+          gs_eban2-txz01 = gs_eban-txz01.
+          gs_eban2-matnr = gs_eban-matnr.
+          gs_eban2-werks = gs_eban-werks.
+          gs_eban2-badat = gs_eban-badat.
+          gs_eban2-ekorg = gs_eban-ekorg.
+          APPEND gs_eban2 TO gt_eban2.
+        ENDIF.
+        APPEND gs_output TO gt_output.
+        CLEAR: gs_output,gs_eban,gs_eban2,gv_string,gs_plant,gv_string,fl_exclude.
+      ENDLOOP.
+      CLEAR gs_eban.
+    ENDIF.
+    CLEAR: gt_t024,gt_eban1.
+    IF gt_eban IS NOT INITIAL.
+      gt_eban1 = gt_eban.
+      SORT gt_eban1 BY ekgrp.
+      DELETE gt_eban1 WHERE ekgrp IS INITIAL.
+      DELETE ADJACENT DUPLICATES FROM gt_eban1 COMPARING ekgrp.
+      IF gt_eban1 IS NOT INITIAL.
+        SELECT ekgrp
+               smtp_addr
+          FROM t024
+          INTO TABLE gt_t024
+          FOR ALL ENTRIES IN gt_eban1
+          WHERE ekgrp EQ gt_eban1-ekgrp.
+        IF sy-subrc = 0.
+          SORT gt_t024 BY ekgrp.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    CLEAR gt_eban1.
+  ENDMETHOD.                    "get_data
+  METHOD process_data.
+    CLEAR:fl_cnsltd,gt_objtxt,gs_objtxt,gv_doc_chng.
+*C--Mail Content
+    get_mail_content( EXPORTING mi_id = c_id
+                                mi_name = c_body
+                                mi_object = c_object ).
+*C--Mail Subject
+    get_mail_content( EXPORTING mi_id = c_id
+                                mi_name = c_subject
+                                mi_object = c_object ).
+    SORT gt_eban BY banfn bnfpo.
+    SORT gt_eban2 BY ekgrp banfn bnfpo.
+    CLEAR: gv_str,gv_str_cs,gv_str2,gs_eban2,gv_email.
+*C--Header Text
+    CONCATENATE text-005
+                text-006
+                text-011
+                text-007
+                text-008
+                text-035
+                text-033
+                text-010
+                text-012
+                c_crlf INTO gv_str2 SEPARATED BY c_tab.
+    IF s_email IS NOT INITIAL.
+      gv_str_cs = gv_str2.
+    ENDIF.
+    LOOP AT gt_eban2 INTO gs_eban2.
+      IF gs_eban2-banfn IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      CLEAR gs_t024.
+      READ TABLE gt_t024 INTO gs_t024 WITH KEY ekgrp = gs_eban2-ekgrp BINARY SEARCH.
+      IF sy-subrc = 0.
+        gv_email = gs_t024-smtp_addr.
+      ENDIF.
+      AT NEW ekgrp.
+        CLEAR: gv_str.
+        gv_str = gv_str2.
+      ENDAT.
+      IF s_email IS NOT INITIAL.
+        excel_content( CHANGING mc_str  = gv_str_cs ).
+      ENDIF.
+      excel_content( CHANGING mc_str  = gv_str ).
+      AT END OF ekgrp.
+        IF gv_email IS NOT INITIAL.
+          send_email( ).
+        ENDIF.
+      ENDAT.
+      CLEAR: gs_eban2.
+    ENDLOOP.
+    CLEAR: gs_eban2, gv_email.
+    IF p_chk1 IS NOT INITIAL AND s_email IS NOT INITIAL AND gv_str_cs IS NOT INITIAL.
+      fl_cnsltd = abap_true.
+      send_email( ).
+    ENDIF.
+    CLEAR:gv_str_cs,gv_str,gv_str2.
+  ENDMETHOD.                    "process_data
+  METHOD get_mail_content .
+    DATA: lt_lines TYPE STANDARD TABLE OF tline,
+          ls_lines TYPE tline.
+    CLEAR:lt_lines,ls_lines.
+*C--Fetching Mail content
+    CALL FUNCTION 'READ_TEXT'
+      EXPORTING
+        id                      = mi_id
+        language                = sy-langu
+        name                    = mi_name
+        object                  = mi_object
+      TABLES
+        lines                   = lt_lines
+      EXCEPTIONS
+        id                      = 1
+        language                = 2
+        name                    = 3
+        not_found               = 4
+        object                  = 5
+        reference_check         = 6
+        wrong_access_to_archive = 7
+        OTHERS                  = 8.
+    IF sy-subrc IS INITIAL.
+      IF mi_name = c_body.
+        LOOP AT lt_lines INTO ls_lines.
+          gs_objtxt-line = ls_lines-tdline.
+          APPEND gs_objtxt TO gt_objtxt.
+          CLEAR:gs_objtxt,ls_lines.
+        ENDLOOP.
+        CLEAR:gs_objtxt,ls_lines.
+      ELSEIF mi_name = c_subject.
+        READ TABLE lt_lines INTO ls_lines INDEX 1.
+        IF sy-subrc IS INITIAL.
+          gv_doc_chng  = ls_lines-tdline.
+          CLEAR ls_lines.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    CLEAR: lt_lines,ls_lines.
+  ENDMETHOD.                    "get_mail_content
+  METHOD excel_content.
+    CONCATENATE mc_str
+                  gs_eban2-banfn c_tab
+                  gs_eban2-bnfpo c_tab
+                  gs_eban2-badat c_tab
+                  gs_eban2-frgzu c_tab
+                  gs_eban2-ekgrp c_tab
+                  gs_eban2-matnr c_tab
+                  gs_eban2-txz01 c_tab
+                  gs_eban2-werks c_tab
+                  gs_eban2-ekorg c_tab
+                  c_tab c_crlf INTO mc_str.
+  ENDMETHOD.                    "EXCEL_CONTENT
+  METHOD send_email.
+    DATA : lv_receiver TYPE ad_smtpadr,
+           lv_str TYPE string.
+    CLEAR: lv_receiver,lv_str,gt_binary,gv_size,
+           go_send_request,go_document,go_recipient,
+           gv_sent_to_all,fl_flg.
+*C--Mapping excel details for consolidated email and requisitioner mail
+    IF fl_cnsltd IS NOT INITIAL.
+      lv_str = gv_str_cs.
+    ELSE.
+      lv_str = gv_str.
+    ENDIF.
+*C--Conversion of string to solix
+    TRY.
+        cl_bcs_convert=>string_to_solix(
+        EXPORTING
+          iv_string   = lv_str
+          iv_codepage = c_4103  "suitable for MS Excel, leave empty
+          iv_add_bom  = abap_true     "for other doc types
+        IMPORTING
+          et_solix  = gt_binary
+          ev_size   = gv_size ).
+      CATCH cx_bcs.
+        MESSAGE e445(so).
+    ENDTRY.
+    TRY.
+*C--create persistent send request
+        go_send_request = cl_bcs=>create_persistent( ).
+
+*C--create and set document with attachment
+* create document object from internal table with text
+
+        go_document = cl_document_bcs=>create_document(
+        i_type    = c_raw
+        i_text    = gt_objtxt
+        i_subject = gv_doc_chng ).
+*C--add the spread sheet as attachment to document object
+        go_document->add_attachment(
+        i_attachment_type    = c_xls
+        i_attachment_subject = text-014
+        i_attachment_size    = gv_size
+        i_att_content_hex    = gt_binary
+        ).
+*C--add document object to send request
+        go_send_request->set_document( go_document ).
+*C--create recipient object
+        IF fl_cnsltd IS NOT INITIAL.
+          fl_flg = abap_true.
+          LOOP AT s_email INTO s_email.
+            lv_receiver = s_email-low.
+            go_recipient = cl_cam_address_bcs=>create_internet_address( lv_receiver ).
+*C--add recipient object to send request
+            go_send_request->add_recipient( go_recipient ).
+            CLEAR:s_email-low.
+          ENDLOOP.
+        ELSEIF gv_email IS NOT INITIAL.
+          fl_flg = abap_true.
+          lv_receiver = gv_email.
+          go_recipient = cl_cam_address_bcs=>create_internet_address( lv_receiver ).
+*C--add recipient object to send request
+          go_send_request->add_recipient( go_recipient ).
+          CLEAR:gv_email.
+        ENDIF.
+        IF  fl_flg EQ abap_true.
+* ---------- send document ---------------------------------------
+          gv_sent_to_all = go_send_request->send( i_with_error_screen = abap_true ).
+          CLEAR: fl_flg.
+          COMMIT WORK.
+        ENDIF.
+*C--error processing
+        IF gv_sent_to_all IS INITIAL.
+          MESSAGE s000(db) WITH text-015.
+        ELSE.
+          MESSAGE s000(db) WITH text-016.
+        ENDIF.
+
+*------------ exception handling ----------------------------------
+      CATCH cx_bcs INTO go_bcs_exception.
+        MESSAGE i865(so) WITH go_bcs_exception->error_type.
+        ROLLBACK WORK.                                 "#EC CI_ROLLBACK
+    ENDTRY.
+  ENDMETHOD.                    "SEND_EMAIL
+  METHOD build_alv.
+
+    DATA:lo_alv_functions TYPE REF TO cl_salv_functions_list.
+
+    SORT gt_output BY banfn bnfpo.
+    IF gt_output[] IS NOT INITIAL.
+      CLEAR: lo_alv_functions,gv_msg.
+      TRY.
+          cl_salv_table=>factory( IMPORTING r_salv_table = go_alv
+                                   CHANGING t_table      = gt_output ).
+
+        CATCH cx_salv_msg INTO go_ref.
+          gv_msg = go_ref->get_text( ).
+          IF gv_msg IS NOT INITIAL.
+            MESSAGE gv_msg TYPE c_s  DISPLAY LIKE c_e.
+          ENDIF.
+      ENDTRY.
+      CLEAR:gv_msg.
+      lo_alv_functions = go_alv->get_functions( ).
+      lo_alv_functions->set_all( abap_true ).
+      CALL METHOD me->columns_header.
+**Displaying.
+      go_alv->display( ).
+    ELSE.
+      MESSAGE text-017 TYPE c_s DISPLAY LIKE c_e.
+      LEAVE LIST-PROCESSING.
+    ENDIF.
+  ENDMETHOD.                    "build_alv
+
+  METHOD columns_header.
+
+    CLEAR : go_column,go_ref,go_columns.
+    go_columns = go_alv->get_columns( ).
+    TRY.
+*Customized field text for ALV Header.
+*C--Purchase Requisition Number
+        go_column ?= go_columns->get_column( text-019 ).
+        go_column->set_long_text( text-005 ).
+*C--Item Number of Purchase Requisition
+        go_column ?= go_columns->get_column( text-020 ).
+        go_column->set_long_text( text-006 ).
+*C--Requisition (Request) Date
+        go_column ?= go_columns->get_column( text-025 ).
+        go_column->set_long_text( text-011 ).
+*C--Release status
+        go_column ?= go_columns->get_column( text-021 ).
+        go_column->set_long_text( text-007 ).
+*C--Purchasing Group
+        go_column ?= go_columns->get_column( text-022 ).
+        go_column->set_long_text( text-008 ).
+*C--Material Number
+        go_column ?= go_columns->get_column( text-034 ).
+        go_column->set_long_text( text-035 ).
+*C--Material Description
+        go_column ?= go_columns->get_column( text-032 ).
+        go_column->set_long_text( text-033 ).
+*C--Plant
+        go_column ?= go_columns->get_column( text-024 ).
+        go_column->set_long_text( text-010 ).
+*C--Purchasing Organization
+        go_column ?= go_columns->get_column( text-026 ).
+        go_column->set_long_text( text-012 ).
+*C--error message
+        go_column ?= go_columns->get_column( text-031 ).
+        go_column->set_long_text( text-018 ).
+      CATCH cx_salv_not_found INTO go_ref.
+*C--in case field name not found we will sent information message
+        CLEAR: gv_msg.
+        gv_msg = go_ref->get_text( ).
+        IF gv_msg IS NOT INITIAL.
+          MESSAGE gv_msg TYPE c_i.
+        ENDIF.
+    ENDTRY.
+    go_columns->set_optimize( abap_true ).
+
+  ENDMETHOD.                    "columns_header
+ENDCLASS.                    "lcl_pr_notif IMPLEMENTATION
+***Unique***
